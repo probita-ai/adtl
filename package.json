@@ -1,0 +1,30 @@
+{
+  "name": "adtl",
+  "private": true,
+  "description": "ADTL \u2014 Agent Data Trust Labels: an open runtime for MCP trust labels",
+  "license": "Apache-2.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -b packages/labels packages/interceptors packages/gateway",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "demo": "npm run build && node examples/github-exfil-demo/demo.mjs",
+    "test:pack": "npm run build && node scripts/pack-test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/probita-ai/adtl.git"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "typescript": "5.6.3",
+    "vitest": "2.1.9"
+  }
+}

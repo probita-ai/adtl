@@ -1,0 +1,49 @@
+# Example ADTL config for the GitHub-issue exfiltration scenario.
+#
+#   adtl-gateway --config examples/adtl.yaml        # full gateway (uses the fake GitHub server)
+#   adtl-interceptors --config examples/adtl.yaml   # interceptor server only
+#
+# For every tool, say two things:
+#   - what its *result* is: integrity (trusted/untrusted) and confidentiality (public/private/secret)
+#   - where *calling* it can send data: egress (none/internal/external/public)
+# Anything left out falls back to the restrictive defaults below.
+
+# Label for results that no rule below covers. Keep this restrictive.
+defaults:
+  integrity: untrusted
+  confidentiality: private
+
+servers:
+  github:
+    # Ignore GitHub's own trust-annotations claims that would relax a label.
+    acceptServerClaims: false
+    tools:
+      read_issue:   { integrity: untrusted, confidentiality: public,  egress: none }    # anyone can write issues
+      get_file:     { integrity: trusted,   confidentiality: private, egress: none }    # private repo contents
+      list_repos:   { integrity: trusted,   confidentiality: public,  egress: none }
+      post_comment: { integrity: trusted,   confidentiality: public,  egress: public }  # result is just "posted"
+
+policy:
+  default: allow
+  rules:
+    - name: no-public-write-after-untrusted
+      when:
+        session.integrity: untrusted
+        tool.egress: [public, external, unknown]
+      then: ask
+      reason: Session has read untrusted content; confirm before writing anywhere public
+
+    - name: private-stays-private
+      when:
+        session.confidentiality: [private, secret]
+        tool.egress: public
+      then: block
+      reason: Private data must not reach a public tool
+
+gateway:
+  upstreams:
+    github:                       # must match servers.github above
+      command: node
+      args: [fake-github/server.mjs]
+      cwd: .                      # relative to this file
+  # audit: ./adtl-audit.jsonl     # uncomment to write a JSONL audit log

@@ -1,0 +1,53 @@
+{
+  "name": "@adtl/labels",
+  "version": "0.1.0",
+  "description": "Experimental: core trust-label model for AI agents \u2014 MCP trust-annotations codec, label propagation and policy evaluation",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "ai-security",
+    "prompt-injection",
+    "information-flow-control",
+    "trust-labels"
+  ],
+  "author": "Murthy G",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/probita-ai/adtl.git",
+    "directory": "packages/labels"
+  },
+  "homepage": "https://github.com/probita-ai/adtl/tree/main/packages/labels#readme",
+  "bugs": {
+    "url": "https://github.com/probita-ai/adtl/issues"
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

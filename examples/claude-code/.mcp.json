@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "adtl": {
+      "command": "node",
+      "args": ["../../packages/gateway/dist/cli.js", "--config", "../adtl.yaml"]
+    }
+  }
+}

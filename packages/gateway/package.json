@@ -1,0 +1,61 @@
+{
+  "name": "@adtl/gateway",
+  "version": "0.1.0",
+  "description": "Experimental: MCP gateway that labels every tool result and blocks risky tool calls using ADTL trust labels",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-gateway",
+    "mcp-proxy",
+    "ai-agents",
+    "ai-security",
+    "prompt-injection",
+    "trust-labels"
+  ],
+  "author": "Murthy G",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "adtl-gateway": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/probita-ai/adtl.git",
+    "directory": "packages/gateway"
+  },
+  "homepage": "https://github.com/probita-ai/adtl/tree/main/packages/gateway#readme",
+  "bugs": {
+    "url": "https://github.com/probita-ai/adtl/issues"
+  },
+  "dependencies": {
+    "@adtl/interceptors": "0.1.0",
+    "@adtl/labels": "0.1.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "yaml": "2.9.1",
+    "zod": "3.25.76"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
