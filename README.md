@@ -4,7 +4,7 @@
 
 ADTL sits between your AI agent and its MCP servers. It labels every tool result with where it came from, whether it can be trusted, and how sensitive it is. Before a risky tool call runs, it checks those labels: allow, block, or ask a human.
 
-![ADTL sketch](docs/adtl-sketch-v2.png)
+![ADTL sketch](docs/adtl-sketch-v3.png)
 
 ## The attack it stops
 
