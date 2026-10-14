@@ -20,8 +20,10 @@ export interface NtfyOptions {
   /** Access token for protected topics. */
   token?: string;
   fetch?: typeof fetch;
-  /** Delay before re-subscribing after the stream drops. */
+  /** Delay before re-subscribing after the stream drops, and the base delay between publish retries. */
   reconnectMs?: number;
+  /** Publish attempts before giving up (network errors, 429 and 5xx are retried). */
+  publishAttempts?: number;
 }
 
 function describe(request: ApprovalRequest): string {
@@ -37,6 +39,7 @@ export class NtfyNotifier implements Notifier {
   private readonly token: string | undefined;
   private readonly fetch: typeof fetch;
   private readonly reconnectMs: number;
+  private readonly publishAttempts: number;
 
   constructor(opts: NtfyOptions) {
     this.server = opts.server.replace(/\/+$/, "");
@@ -45,6 +48,7 @@ export class NtfyNotifier implements Notifier {
     this.token = opts.token;
     this.fetch = opts.fetch ?? globalThis.fetch;
     this.reconnectMs = opts.reconnectMs ?? 1000;
+    this.publishAttempts = opts.publishAttempts ?? 3;
   }
 
   private get auth(): Record<string, string> {
@@ -82,12 +86,24 @@ export class NtfyNotifier implements Notifier {
         tags: [event.result.outcome === "approved" ? "white_check_mark" : "x"],
       };
     }
-    const res = await this.fetch(this.server, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...this.auth },
-      body: JSON.stringify({ topic: this.topic, ...message }),
-    });
-    if (!res.ok) throw new Error(`ntfy publish failed: HTTP ${res.status}`);
+    await this.publish(JSON.stringify({ topic: this.topic, ...message }));
+  }
+
+  /** POST with retries: flaky networks should not turn an approval request into a denial. */
+  private async publish(body: string): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      let res: Response | undefined;
+      try {
+        res = await this.fetch(this.server, { method: "POST", headers: { "Content-Type": "application/json", ...this.auth }, body });
+      } catch (err) {
+        if (attempt >= this.publishAttempts) throw err;
+      }
+      if (res?.ok) return;
+      if (res && ((res.status !== 429 && res.status < 500) || attempt >= this.publishAttempts)) {
+        throw new Error(`ntfy publish failed: HTTP ${res.status}`);
+      }
+      await new Promise((r) => setTimeout(r, this.reconnectMs * attempt));
+    }
   }
 
   async listen(request: ApprovalRequest, answer: AnswerFn, signal: AbortSignal): Promise<void> {

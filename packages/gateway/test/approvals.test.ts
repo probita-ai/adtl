@@ -149,6 +149,35 @@ describe("NtfyNotifier", () => {
     expect((await p).outcome).toBe("approved");
   });
 
+  it("retries a publish that hits a network error", async () => {
+    ntfy = await startFakeNtfy();
+    let calls = 0;
+    const flaky: typeof fetch = (input, init) => {
+      if (init?.method === "POST" && calls++ === 0) return Promise.reject(new TypeError("fetch failed", { cause: { code: "ECONNRESET" } }));
+      return fetch(input, init);
+    };
+    const broker = new ApprovalBroker({
+      notifiers: [new NtfyNotifier({ server: ntfy.url, topic: "t", fetch: flaky, reconnectMs: 10 })],
+      timeoutMs: 5000,
+    });
+    const p = broker.request(CALL);
+    await ntfy.press("t", "Allow");
+    expect((await p).outcome).toBe("approved");
+    expect(calls).toBeGreaterThan(1);
+  });
+
+  it("gives up after the last attempt and says why", async () => {
+    const warnings: string[] = [];
+    const down: typeof fetch = () => Promise.reject(new TypeError("fetch failed", { cause: { code: "ECONNRESET" } }));
+    const broker = new ApprovalBroker({
+      notifiers: [new NtfyNotifier({ server: "http://x", topic: "t", fetch: down, reconnectMs: 1 })],
+      timeoutMs: 5000,
+      log: { warn: (m) => warnings.push(m) },
+    });
+    expect((await broker.request(CALL)).outcome).toBe("undeliverable");
+    expect(warnings[0]).toContain("fetch failed (ECONNRESET)");
+  });
+
   it("reports the server being unreachable as undeliverable", async () => {
     const broker = new ApprovalBroker({ notifiers: [new NtfyNotifier({ server: "http://127.0.0.1:9", topic: "t" })], timeoutMs: 5000 });
     expect((await broker.request(CALL)).outcome).toBe("undeliverable");

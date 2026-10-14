@@ -59,6 +59,14 @@ export interface Notifier {
 
 const TOKEN_PREFIX = "adtl1";
 
+/** Error message plus its cause, e.g. "fetch failed (ECONNRESET)". */
+export function errorText(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = err.cause as { code?: string; message?: string } | undefined;
+  const detail = cause?.code ?? cause?.message;
+  return detail && !err.message.includes(detail) ? `${err.message} (${detail})` : err.message;
+}
+
 export class ApprovalTokens {
   constructor(private readonly secret: Buffer = randomBytes(32)) {}
 
@@ -160,7 +168,7 @@ export class ApprovalBroker {
     const listeners = this.notifiers.filter((n) => n.listen);
     for (const n of listeners) {
       n.listen!(request, (token, approver) => this.answer(token, n.name, approver), abort.signal).catch((err: unknown) =>
-        this.log.warn(`${n.name}: stopped listening for approvals: ${(err as Error).message}`),
+        this.log.warn(`${n.name}: stopped listening for approvals: ${errorText(err)}`),
       );
     }
     const tokens = { allow: this.tokens.sign(request, "allow"), deny: this.tokens.sign(request, "deny") };
@@ -168,7 +176,7 @@ export class ApprovalBroker {
       n.notify({ kind: "pending", request, tokens }).then(
         () => true,
         (err: unknown) => {
-          this.log.warn(`${n.name}: could not send approval request: ${(err as Error).message}`);
+          this.log.warn(`${n.name}: could not send approval request: ${errorText(err)}`);
           return false;
         },
       ),
@@ -205,7 +213,7 @@ export class ApprovalBroker {
 
   private broadcast(event: ApprovalEvent): void {
     for (const n of this.notifiers) {
-      n.notify(event).catch((err: unknown) => this.log.warn(`${n.name}: could not send ${event.kind} notice: ${(err as Error).message}`));
+      n.notify(event).catch((err: unknown) => this.log.warn(`${n.name}: could not send ${event.kind} notice: ${errorText(err)}`));
     }
   }
 }
