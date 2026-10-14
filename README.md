@@ -44,6 +44,8 @@ See [`@adtl/gateway`](packages/gateway) for the config format, and [examples/cla
 
 v0.1 (experimental) labels tool results, checks tool calls, proxies stdio and HTTP servers, and writes an audit log.
 
+v0.1.1 adds audit mode (`adtl-gateway --audit`): try a policy out by logging what it would stop, without stopping anything.
+
 Planned next:
 
 - **v0.2:** human approvals, so "ask" really asks you (terminal, phone)
