@@ -1,6 +1,6 @@
 {
   "name": "@adtl/interceptors",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Experimental: MCP interceptor server (SEP-2624 draft) that labels tool results and checks tool calls with ADTL trust labels",
   "keywords": [
     "mcp",
@@ -46,7 +46,7 @@
     "url": "https://github.com/probita-ai/adtl/issues"
   },
   "dependencies": {
-    "@adtl/labels": "0.1.1",
+    "@adtl/labels": "0.2.0",
     "@modelcontextprotocol/sdk": "1.31.0",
     "yaml": "2.9.1",
     "zod": "3.25.76"

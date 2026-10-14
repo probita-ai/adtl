@@ -32,7 +32,7 @@ import type { AuditEntry, AuditSink } from "./audit.js";
 import { TOOL_SEPARATOR } from "./config.js";
 import type { Blocked, ChainOutcome, InterceptorInvoker } from "./invoker.js";
 
-export const GATEWAY_VERSION = "0.1.1";
+export const GATEWAY_VERSION = "0.2.0";
 
 /** `_meta` key on gateway-generated error results describing why a call was stopped. */
 export const GATEWAY_DECISION_KEY = "adtl/gateway";

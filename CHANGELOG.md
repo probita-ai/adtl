@@ -1,12 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — experimental
 
 ### `@adtl/gateway`
 - Approvals: with `gateway.approvals` configured, an `ask` decision holds the call and asks a human instead of blocking. Deny, no answer before `timeoutSeconds` (default 50), or failing to reach anyone stops the call.
 - ntfy push notifications with Allow / Deny buttons. Answers come back through a reply topic, so the gateway needs no open port.
 - Signed approval tokens: HMAC over the approval id, the call's hash, the decision and the expiry. Single use; forged, reused or late answers are ignored.
 - Email notices over SMTP (notify only, no approve links) for pending, blocked and resolved approvals.
+- ntfy publishes retry up to 3 times on network errors, 429 and 5xx, so one dropped connection doesn't deny a call. Warnings include the cause, e.g. `fetch failed (ECONNRESET)`.
 - Pluggable `Notifier` interface for more channels.
 - Progress notifications while a call waits for approval.
 - Audit log entries record `approval: { outcome, channel, waitedMs }`.
