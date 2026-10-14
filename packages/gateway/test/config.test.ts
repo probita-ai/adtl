@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EnvExpansionError, expandEnv, expandUpstream, loadGatewayConfig } from "../src/index.js";
+import { EnvExpansionError, expandApprovals, expandEnv, expandUpstream, loadGatewayConfig } from "../src/index.js";
 
 function writeConfig(yaml: string): string {
   const dir = mkdtempSync(join(tmpdir(), "adtl-gw-"));
@@ -50,6 +50,30 @@ gateway:
     expect(c.gateway.upstreams.docs).toEqual({ url: "https://example.com/mcp", headers: {} });
     expect(c.gateway.interceptorTimeoutMs).toBe(5000);
     expect(c.gateway.mode).toBe("active");
+  });
+
+  it("parses approvals with defaults and expands ${VAR} in them", async () => {
+    const c = await loadGatewayConfig(
+      writeConfig(`
+gateway:
+  upstreams: { a: { command: x } }
+  approvals:
+    ntfy: { topic: "\${TOPIC}" }
+    email: { smtp: { host: smtp.x, user: me, pass: "\${PASS}" }, from: a@x, to: b@x }
+`),
+    );
+    const a = c.gateway.approvals!;
+    expect(a.timeoutSeconds).toBe(50);
+    expect(a.ntfy).toEqual({ server: "https://ntfy.sh", topic: "\${TOPIC}" });
+    expect(a.email).toMatchObject({ smtp: { port: 587 }, on: ["pending", "blocked"] });
+    expect(expandApprovals(a, { TOPIC: "adtl-long-random-topic", PASS: "pw" })).toMatchObject({
+      ntfy: { topic: "adtl-long-random-topic" },
+      email: { smtp: { pass: "pw" } },
+    });
+    expect(() => expandApprovals(a, {})).toThrow("TOPIC is not set (used in gateway.approvals.ntfy.topic)");
+    await expect(loadGatewayConfig(writeConfig("gateway: { upstreams: { a: { command: x } }, approvals: { email: { on: [sometimes] } } }\n"))).rejects.toThrow(
+      /gateway.approvals.email/,
+    );
   });
 
   it("accepts mode: audit and rejects other modes", async () => {

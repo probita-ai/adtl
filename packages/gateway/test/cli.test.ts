@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { startFakeNtfy } from "./fakeNtfy.js";
 
 const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 const EXAMPLE = fileURLToPath(new URL("../../../examples/adtl.yaml", import.meta.url));
@@ -22,14 +23,14 @@ afterEach(async () => {
   await Promise.allSettled(clients.splice(0).map((c) => c.close()));
 });
 
-function tempConfig(): { dir: string; config: string; audit: string; posted: string } {
+function tempConfig(extraGateway = ""): { dir: string; config: string; audit: string; posted: string } {
   const dir = mkdtempSync(join(tmpdir(), "adtl-e2e-"));
   const config = join(dir, "adtl.yaml");
   const audit = join(dir, "audit.jsonl");
   const posted = join(dir, "posted.jsonl");
   const yaml = readFileSync(EXAMPLE, "utf8")
     .replace(/gateway:[\s\S]*$/, "")
-    .concat(`gateway:\n  audit: ./audit.jsonl\n  upstreams:\n    github:\n      command: ${JSON.stringify(process.execPath)}\n      args: [${JSON.stringify(FAKE_GITHUB)}]\n      env: { FAKE_GITHUB_POSTED: ${JSON.stringify(posted)} }\n`);
+    .concat(`gateway:\n  audit: ./audit.jsonl\n${extraGateway}  upstreams:\n    github:\n      command: ${JSON.stringify(process.execPath)}\n      args: [${JSON.stringify(FAKE_GITHUB)}]\n      env: { FAKE_GITHUB_POSTED: ${JSON.stringify(posted)} }\n`);
   writeFileSync(config, yaml);
   return { dir, config, audit, posted };
 }
@@ -62,6 +63,37 @@ describe.skipIf(!existsSync(CLI))("adtl-gateway CLI (real processes)", () => {
       ["post_comment", "blocked"],
     ]);
     expect(entries[2]).toMatchObject({ decision: "block", sessionLabel: { integrity: "untrusted", confidentiality: "private" } });
+  }, 20_000);
+
+  it("asks on the phone over ntfy and runs the call once approved", async () => {
+    const ntfy = await startFakeNtfy();
+    try {
+      const t = tempConfig(`  approvals:\n    ntfy: { server: "${ntfy.url}", topic: "\${ADTL_NTFY_TOPIC}" }\n`);
+      const agent = new Client({ name: "e2e-agent", version: "0.0.0" });
+      await agent.connect(
+        new StdioClientTransport({
+          command: process.execPath,
+          args: [CLI, "--config", t.config],
+          env: { ...getDefaultEnvironment(), ADTL_NTFY_TOPIC: "e2e-approvals-topic" },
+          stderr: "pipe",
+        }),
+      );
+      clients.push(agent);
+      const call = (name: string, args: Record<string, unknown>) => agent.callTool({ name, arguments: args }) as Promise<CallToolResult>;
+      await call("github__read_issue", { repo: "acme/website", number: 42 });
+      const [result] = await Promise.all([
+        call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" }),
+        ntfy.press("e2e-approvals-topic", "Allow"),
+      ]);
+      expect(result.isError).toBeFalsy();
+
+      await agent.close();
+      expect(readFileSync(t.posted, "utf8")).toContain("hello");
+      const entries = readFileSync(t.audit, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      expect(entries[1]).toMatchObject({ tool: "post_comment", outcome: "forwarded", decision: "ask", approval: { outcome: "approved", channel: "ntfy" } });
+    } finally {
+      await ntfy.close();
+    }
   }, 20_000);
 
   it("--audit forwards everything and logs what would have been stopped", async () => {

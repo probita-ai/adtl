@@ -12,17 +12,21 @@ import { INTERCEPTORS_EXTENSION, LABEL_INTERCEPTOR, POLICY_INTERCEPTOR, parseCon
 import type { AdtlConfig } from "@adtl/labels";
 import { parse as parseYaml } from "yaml";
 import { ZodError } from "zod";
+import { ApprovalBroker, type Notifier } from "./approvals.js";
 import { JsonlAuditLog } from "./audit.js";
 import {
   GatewayConfigSchema,
+  expandApprovals,
   expandUpstream,
   isHttpUpstream,
   type GatewayConfig,
   type StdioUpstream,
   type Upstream,
 } from "./config.js";
+import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
 import { InterceptorInvoker } from "./invoker.js";
+import { NtfyNotifier } from "./ntfy.js";
 
 export class GatewayConfigError extends Error {
   constructor(message: string) {
@@ -93,6 +97,26 @@ async function connect(id: string, u: Upstream, baseDir: string): Promise<Client
   return client;
 }
 
+/** Build the approval broker from `gateway.approvals`, or undefined if not configured. */
+export function createApprovals(cfg: GatewayConfig, env: NodeJS.ProcessEnv, log: GatewayLogger): ApprovalBroker | undefined {
+  if (!cfg.approvals) return undefined;
+  const a = expandApprovals(cfg.approvals, env);
+  const notifiers: Notifier[] = [];
+  if (a.ntfy) {
+    if (/^https:\/\/ntfy\.sh\/?$/.test(a.ntfy.server) && a.ntfy.topic.length < 20 && !a.ntfy.token) {
+      log.warn("gateway.approvals.ntfy.topic is short and on the public ntfy.sh server: anyone who guesses it can approve calls. Use a long random topic.");
+    }
+    notifiers.push(new NtfyNotifier(a.ntfy));
+  }
+  if (a.email) {
+    notifiers.push(new EmailNotifier({ smtp: a.email.smtp, from: a.email.from, to: [a.email.to].flat(), on: a.email.on }));
+  }
+  if (notifiers.length === 0) return undefined;
+  if (!notifiers.some((n) => n.listen)) log.warn('no approval channel can carry answers (configure gateway.approvals.ntfy); "ask" still blocks');
+  log.info(`approvals: ${notifiers.map((n) => n.name).join(", ")} (timeout ${a.timeoutSeconds}s)`);
+  return new ApprovalBroker({ notifiers, timeoutMs: a.timeoutSeconds * 1000, log });
+}
+
 export interface StartedGateway {
   gateway: AdtlGateway;
   close(): Promise<void>;
@@ -152,7 +176,14 @@ export async function startGateway(
     log.info(`upstreams: ${[...upstreams.keys()].join(", ")}`);
 
     const auditLog = loaded.gateway.audit ? new JsonlAuditLog(resolve(baseDir, loaded.gateway.audit)) : undefined;
-    const gateway = new AdtlGateway({ upstreams, invoker, ...(auditLog ? { audit: auditLog } : {}), logger: log });
+    const approvals = createApprovals(loaded.gateway, env, log);
+    const gateway = new AdtlGateway({
+      upstreams,
+      invoker,
+      ...(auditLog ? { audit: auditLog } : {}),
+      ...(approvals ? { approvals } : {}),
+      logger: log,
+    });
     return { gateway, close: closeAll };
   } catch (err) {
     await closeAll();

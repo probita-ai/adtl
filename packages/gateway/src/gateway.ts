@@ -7,8 +7,11 @@
  *               interceptors (adtl.label) → agent
  *
  * When a call is stopped, the agent receives a normal tool result with
- * `isError: true` explaining why, so the model can tell the user. In v0.1 an
- * "ask" decision is treated as a block; approvals arrive in v0.2.
+ * `isError: true` explaining why, so the model can tell the user.
+ *
+ * An "ask" decision holds the call and asks a human through the approval
+ * broker (e.g. a phone notification). Approved calls run; denied, unanswered
+ * or undeliverable ones are stopped. Without an approval channel, "ask" blocks.
  *
  * In audit mode (the invoker runs every interceptor with `mode: "audit"`)
  * nothing is stopped or changed: calls the policy would stop are forwarded,
@@ -24,6 +27,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { InvocationContext } from "@adtl/interceptors";
+import type { ApprovalBroker, ApprovalResult } from "./approvals.js";
 import type { AuditEntry, AuditSink } from "./audit.js";
 import { TOOL_SEPARATOR } from "./config.js";
 import type { Blocked, ChainOutcome, InterceptorInvoker } from "./invoker.js";
@@ -56,7 +60,17 @@ export interface AdtlGatewayOptions {
   sessionId?: string;
   audit?: AuditSink;
   logger?: GatewayLogger;
+  /** Asks humans about "ask" decisions and sends notices. */
+  approvals?: ApprovalBroker;
 }
+
+export interface CallOptions {
+  /** Report progress to the client while a call waits for approval. */
+  progress?: (progress: number, message: string) => Promise<void>;
+}
+
+/** How often a waiting call reports progress, so clients that reset their timeout on progress keep waiting. */
+const PROGRESS_INTERVAL_MS = 10_000;
 
 function textError(text: string, meta: Record<string, unknown>): CallToolResult {
   return { content: [{ type: "text", text }], isError: true, _meta: { [GATEWAY_DECISION_KEY]: meta } };
@@ -66,10 +80,22 @@ function blockedMessage(b: Blocked): string {
   if (b.decision === "ask") {
     return (
       `ADTL stopped this call because it needs a human's approval: ${b.reason}. ` +
-      `This version of ADTL cannot ask for approval yet, so the call was not run. Tell the user what you were trying to do.`
+      `No approval channel is configured, so the call was not run. Tell the user what you were trying to do.`
     );
   }
   return `ADTL blocked this call: ${b.reason}. The call was not run.`;
+}
+
+function approvalMessage(b: Blocked, a: ApprovalResult): string {
+  const why = `ADTL asked a human to approve this call because: ${b.reason}.`;
+  switch (a.outcome) {
+    case "denied":
+      return `${why} The request was denied, so the call was not run. Do not retry it; tell the user what you were trying to do.`;
+    case "timeout":
+      return `${why} Nobody answered in time, so the call was not run. Tell the user, who can approve it if you try again.`;
+    default:
+      return `${why} ADTL could not reach anyone to approve it, so the call was not run. Tell the user what you were trying to do.`;
+  }
 }
 
 function infoOf(outcome: ChainOutcome, interceptor: string): Record<string, unknown> {
@@ -82,6 +108,7 @@ export class AdtlGateway {
   private readonly invoker: InterceptorInvoker;
   private readonly audit: AuditSink | undefined;
   private readonly log: GatewayLogger;
+  private readonly approvals: ApprovalBroker | undefined;
   private routes = new Map<string, Route>();
 
   constructor(opts: AdtlGatewayOptions) {
@@ -90,6 +117,7 @@ export class AdtlGateway {
     this.sessionId = opts.sessionId ?? randomUUID();
     this.audit = opts.audit;
     this.log = opts.logger ?? stderrLogger;
+    this.approvals = opts.approvals;
   }
 
   /** The downstream MCP server the agent connects to. */
@@ -104,7 +132,15 @@ export class AdtlGateway {
       },
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await this.listTools() }));
-    server.setRequestHandler(CallToolRequestSchema, async (req) => this.callTool(req.params.name, req.params.arguments ?? {}));
+    server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
+      const progressToken = req.params._meta?.progressToken;
+      const progress =
+        progressToken === undefined
+          ? undefined
+          : (progress: number, message: string) =>
+              extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress, message } });
+      return this.callTool(req.params.name, req.params.arguments ?? {}, progress ? { progress } : {});
+    });
     return server;
   }
 
@@ -131,7 +167,7 @@ export class AdtlGateway {
     return tools;
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+  async callTool(name: string, args: Record<string, unknown>, opts: CallOptions = {}): Promise<CallToolResult> {
     const started = performance.now();
     let route = this.routes.get(name);
     if (!route) {
@@ -158,13 +194,39 @@ export class AdtlGateway {
     const requestPayload = { method: "tools/call", params: { name: route.tool, arguments: args } };
     const req = await this.invoker.runRequest({ event: "tools/call", payload: requestPayload, config, context });
     const policy = infoOf(req, "adtl.policy");
+    let approval: ApprovalResult | undefined;
     if (req.blocked) {
-      finish({ outcome: "blocked", decision: req.blocked.decision, reason: req.blocked.reason, matched: policy.matched, callHash: policy.callHash, sessionLabel: policy.sessionLabel, warnings: req.warnings });
-      this.log.info(`${req.blocked.decision} ${name}: ${req.blocked.reason}`);
-      return textError(blockedMessage(req.blocked), { ...req.blocked, callHash: policy.callHash });
+      const b = req.blocked;
+      const stopped = { decision: b.decision, reason: b.reason, matched: policy.matched, callHash: policy.callHash, sessionLabel: policy.sessionLabel };
+      const matched = Array.isArray(policy.matched) ? (policy.matched as string[]) : [];
+      if (b.decision === "ask" && this.approvals?.canApprove && typeof policy.callHash === "string") {
+        this.log.info(`ask ${name}: waiting for approval (${b.reason})`);
+        approval = await this.waitForApproval(opts, () =>
+          this.approvals!.request({
+            sessionId: this.sessionId,
+            server: route.upstream,
+            tool: route.tool,
+            callHash: policy.callHash as string,
+            reason: b.reason,
+            matched,
+            ...(policy.sessionLabel !== undefined ? { sessionLabel: policy.sessionLabel } : {}),
+          }),
+        );
+        this.log.info(`ask ${name}: ${approval.outcome}`);
+        if (approval.outcome !== "approved") {
+          finish({ outcome: "blocked", ...stopped, approval, warnings: req.warnings });
+          return textError(approvalMessage(b, approval), { ...b, callHash: policy.callHash, approval });
+        }
+      } else {
+        finish({ outcome: "blocked", ...stopped, warnings: req.warnings });
+        this.log.info(`${b.decision} ${name}: ${b.reason}`);
+        this.approvals?.blocked({ sessionId: this.sessionId, server: route.upstream, tool: route.tool, reason: b.reason, matched });
+        return textError(blockedMessage(b), { ...b, callHash: policy.callHash });
+      }
     }
     const forwarded = (req.payload as typeof requestPayload).params;
     const decision = policy["adtl/decision"] as string | undefined;
+    const approved = approval ? { approval } : {};
     const audit = this.invoker.modeOverride === "audit";
     // Only set in audit mode, for calls the policy would have stopped.
     const wouldStop =
@@ -179,7 +241,7 @@ export class AdtlGateway {
       result = (await client.callTool({ name: forwarded.name, arguments: forwarded.arguments })) as CallToolResult;
     } catch (err) {
       const reason = (err as Error).message;
-      finish({ outcome: "upstream_error", ...(decision ? { decision } : {}), reason, callHash: policy.callHash, ...(audit ? { mode: "audit" as const } : {}), warnings: req.warnings });
+      finish({ outcome: "upstream_error", ...(decision ? { decision } : {}), ...approved, reason, callHash: policy.callHash, ...(audit ? { mode: "audit" as const } : {}), warnings: req.warnings });
       return textError(`The ${route.upstream} server returned an error: ${reason}`, { reason: "upstream_error" });
     }
 
@@ -202,6 +264,7 @@ export class AdtlGateway {
       // Missing only if adtl.policy failed and was allowed to (audit mode); see warnings.
       ...(decision ? { decision } : {}),
       ...(wouldStop ?? {}),
+      ...approved,
       ...(audit ? { mode: "audit" as const } : {}),
       callHash: policy.callHash,
       label: label.label,
@@ -209,5 +272,19 @@ export class AdtlGateway {
       warnings: [...req.warnings, ...res.warnings],
     });
     return (res.payload as { result: CallToolResult }).result;
+  }
+
+  /** Run an approval request, reporting progress to the client while it waits. */
+  private async waitForApproval(opts: CallOptions, ask: () => Promise<ApprovalResult>): Promise<ApprovalResult> {
+    if (!opts.progress) return ask();
+    let n = 0;
+    const report = () => void opts.progress!(++n, "Waiting for a human to approve this call").catch(() => undefined);
+    report();
+    const timer = setInterval(report, PROGRESS_INTERVAL_MS);
+    try {
+      return await ask();
+    } finally {
+      clearInterval(timer);
+    }
   }
 }

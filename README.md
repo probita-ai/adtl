@@ -46,11 +46,15 @@ v0.1 (experimental) labels tool results, checks tool calls, proxies stdio and HT
 
 v0.1.1 adds audit mode (`adtl-gateway --audit`): try a policy out by logging what it would stop, without stopping anything.
 
+v0.2 adds human approvals: an "ask" decision sends a push notification to your phone with Allow / Deny buttons (via [ntfy](https://ntfy.sh)), plus optional email notices. See [Approvals](packages/gateway#approvals).
+
 Planned next:
 
-- **v0.2:** human approvals, so "ask" really asks you (terminal, phone)
-- **v0.3:** a label ledger, so labels survive when data moves into files and memory
-- **v0.4:** labels carried across sub-agents and A2A, plus interop with FIDES
+- **v0.3:** authorization (RBAC / ABAC): who may call a tool and who may approve, using existing engines such as Cedar and OpenFGA
+- **v0.4:** a label ledger, so labels survive when data moves into files and memory
+- **v0.5:** labels carried across sub-agents and A2A, plus interop with FIDES
+
+Help is very welcome: see the [open issues](https://github.com/probita-ai/adtl/issues), especially the ones marked [help wanted](https://github.com/probita-ai/adtl/labels/help%20wanted).
 
 ## Questions I'd love feedback on
 

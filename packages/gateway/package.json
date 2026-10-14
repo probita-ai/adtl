@@ -49,6 +49,7 @@
     "@adtl/interceptors": "0.1.1",
     "@adtl/labels": "0.1.1",
     "@modelcontextprotocol/sdk": "1.31.0",
+    "nodemailer": "10.0.12",
     "yaml": "2.9.1",
     "zod": "3.25.76"
   },

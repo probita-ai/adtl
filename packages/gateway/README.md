@@ -6,6 +6,7 @@ An MCP gateway for AI agents. It sits between your agent (Claude Code, Cursor, a
 
 - **labels every tool result**: where it came from, whether it can be trusted, how sensitive it is (MCP's draft `trust-annotations` format)
 - **checks every tool call** against what the session has already seen: allow, ask, or block
+- **asks you on your phone** before risky calls, with Allow / Deny buttons (via [ntfy](https://ntfy.sh)), and can email you notices
 - **writes an audit log** of every decision (no arguments or results are stored)
 
 It stops attacks like the 2025 GitHub MCP exfiltration, where a public issue told an agent to post private repository contents in a comment.
@@ -63,7 +64,7 @@ Labels only get stricter as a session goes on. A session that has read anything 
 
 ### Policy
 
-Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and `tool` (`server.tool` globs such as `github.*`), and decide `allow`, `ask` or `block`. When several rules match, the most restrictive decision wins. In this version `ask` is treated as `block`; approvals are planned for v0.2.
+Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and `tool` (`server.tool` globs such as `github.*`), and decide `allow`, `ask` or `block`. When several rules match, the most restrictive decision wins. `ask` waits for a human when [approvals](#approvals) are configured, and blocks otherwise.
 
 ### Gateway
 
@@ -72,10 +73,42 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 | `gateway.upstreams.<id>` | A stdio server (`command`, `args`, `env`, `cwd`) or an HTTP server (`url`, `headers`). The `<id>` must match the key under `servers:`. |
 | `gateway.audit` | Path of a JSONL audit log, relative to the config file |
 | `gateway.mode` | `active` (default) or `audit`. See [Trying a policy safely](#trying-a-policy-safely). |
+| `gateway.approvals` | Ask a human about `ask` decisions. See [Approvals](#approvals). |
 | `gateway.interceptorTimeoutMs` | Timeout per interceptor call (default 5000) |
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
 
 `${VAR}` in commands, args, env, URLs and headers is read from the environment, so secrets stay out of the file.
+
+### Approvals
+
+With approvals configured, an `ask` decision holds the call and sends you a push notification with **Allow** and **Deny** buttons. Allow runs the call; Deny, or no answer before the timeout, stops it.
+
+```yaml
+gateway:
+  approvals:
+    timeoutSeconds: 50              # no answer means deny (default 50)
+    ntfy:
+      topic: ${ADTL_NTFY_TOPIC}     # a long random name; subscribe to it in the ntfy app
+      # server: https://ntfy.example.com   # default https://ntfy.sh
+      # token: ${NTFY_TOKEN}               # for access-controlled topics
+    email:                          # optional, notify only
+      smtp: { host: smtp.example.com, port: 465, user: "${SMTP_USER}", pass: "${SMTP_PASS}" }
+      from: adtl@example.com
+      to: you@example.com
+      on: [pending, blocked]        # also: approved, denied, timeout, undeliverable
+```
+
+Setup: install the [ntfy app](https://ntfy.sh), subscribe to your topic, and set `ADTL_NTFY_TOPIC` in the gateway's environment, for example in Claude Code's `.mcp.json` `env`.
+
+How it works and what to know:
+
+- **No open ports.** The buttons post your answer to a reply topic (`<topic>-reply`) on the same ntfy server, and the gateway listens there.
+- **Answers are signed.** Each button carries a token that only answers that one call (it's bound to the call's hash), only once, and only until it expires. Forged, reused or late answers are ignored.
+- **Keep the topic private.** Anyone who can read your topic can press your buttons. Use a long random topic name on ntfy.sh, or an access-controlled topic on your own ntfy server.
+- **Nothing sensitive is sent.** Notifications and emails name the tool, the server and the reason, never the call's arguments or results.
+- **Email never contains approve links,** because mail security scanners open links automatically and would approve calls by themselves.
+- **Mind client timeouts.** Many MCP clients give up on a request after 60 seconds, so the default timeout is 50. The gateway sends progress notifications while it waits, which lets clients that reset their timeout on progress wait longer.
+- **Every outcome is logged.** The audit log records `approval: { outcome, channel, waitedMs }` for each call that was asked.
 
 ### Trying a policy safely
 
@@ -102,8 +135,8 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 ## Limits of this version
 
 - Only tools are proxied. Resources and prompts are not passed through yet.
-- `ask` blocks instead of asking. Human approvals are planned for v0.2.
-- Labels last for one gateway process, which is one agent session. They are not carried into files, memory or other agents yet; that's planned for v0.3.
+- Approvals come from one push channel (ntfy). Other channels, approvals inside the MCP client, and approver roles are planned.
+- Labels last for one gateway process, which is one agent session. They are not carried into files, memory or other agents yet; that's planned for v0.4.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.
 
 ## Links

@@ -5,7 +5,16 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { AdtlInterceptors, createInterceptorServer, parseConfigText } from "@adtl/interceptors";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { AdtlGateway, GATEWAY_DECISION_KEY, InterceptorInvoker, MemoryAuditLog } from "../src/index.js";
+import {
+  AdtlGateway,
+  ApprovalBroker,
+  GATEWAY_DECISION_KEY,
+  InterceptorInvoker,
+  MemoryAuditLog,
+  type ApprovalEvent,
+  type AnswerFn,
+  type Notifier,
+} from "../src/index.js";
 // @ts-expect-error -- plain JS example module
 import { createFakeGithubServer, SECRET_FILE } from "../../../examples/fake-github/server.mjs";
 
@@ -26,7 +35,23 @@ async function linked(server: { connect(t: unknown): Promise<void> }, name: stri
   return client;
 }
 
-async function setup(opts: { interceptorsServer?: { connect(t: unknown): Promise<void> }; mode?: "audit" } = {}) {
+/** A push channel whose "human" answers every request the same way (or never). */
+class AutoAnswer implements Notifier {
+  readonly name = "auto";
+  events: ApprovalEvent[] = [];
+  private answer: AnswerFn | undefined;
+  constructor(private readonly decision: "allow" | "deny" | "never") {}
+  async listen(_r: unknown, answer: AnswerFn, signal: AbortSignal) {
+    this.answer = answer;
+    await new Promise<void>((r) => signal.addEventListener("abort", () => r()));
+  }
+  async notify(e: ApprovalEvent) {
+    this.events.push(e);
+    if (e.kind === "pending" && this.decision !== "never") setTimeout(() => this.answer!(e.tokens[this.decision as "allow" | "deny"]), 5);
+  }
+}
+
+async function setup(opts: { interceptorsServer?: { connect(t: unknown): Promise<void> }; mode?: "audit"; approvals?: ApprovalBroker } = {}) {
   const posted: unknown[] = [];
   const config = parseConfigText(readFileSync(CONFIG, "utf8"));
   const icClient = await linked(opts.interceptorsServer ?? createInterceptorServer(new AdtlInterceptors({ config })), "gw→interceptors");
@@ -37,6 +62,7 @@ async function setup(opts: { interceptorsServer?: { connect(t: unknown): Promise
     invoker: new InterceptorInvoker(await InterceptorInvoker.discover(icClient), 5000, opts.mode),
     sessionId: "test-session",
     audit,
+    ...(opts.approvals ? { approvals: opts.approvals } : {}),
     logger: { info: () => {}, warn: () => {} },
   });
   const agent = await linked(gateway.createServer(), "agent");
@@ -119,6 +145,65 @@ describe("adtl-gateway", () => {
     expect(r.isError).toBe(true);
     expect(textOf(r)).toContain("adtl.policy failed");
     expect(posted).toHaveLength(0);
+  });
+
+  describe("approvals", () => {
+    async function untrustedSession(decision: "allow" | "deny" | "never", timeoutMs = 5000) {
+      const push = new AutoAnswer(decision);
+      const s = await setup({ approvals: new ApprovalBroker({ notifiers: [push], timeoutMs }) });
+      await s.call("github__read_issue", { repo: "acme/website", number: 42 });
+      return { ...s, push };
+    }
+
+    it("runs an asked call once a human approves it", async () => {
+      const { call, posted, audit, push } = await untrustedSession("allow");
+      const r = await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });
+      expect(r.isError).toBeFalsy();
+      expect(posted).toHaveLength(1);
+      const pending = push.events.find((e) => e.kind === "pending");
+      expect(pending).toMatchObject({ request: { server: "github", tool: "post_comment", matched: ["no-public-write-after-untrusted"] } });
+      expect(JSON.stringify(pending)).not.toContain("hello"); // no arguments in notifications
+      expect(audit.entries[1]).toMatchObject({ outcome: "forwarded", decision: "ask", approval: { outcome: "approved", channel: "auto" } });
+    });
+
+    it("stops the call when the human denies it", async () => {
+      const { call, posted, audit } = await untrustedSession("deny");
+      const r = await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });
+      expect(r.isError).toBe(true);
+      expect(textOf(r)).toContain("denied");
+      expect(r._meta?.[GATEWAY_DECISION_KEY]).toMatchObject({ decision: "ask", approval: { outcome: "denied" } });
+      expect(posted).toHaveLength(0);
+      expect(audit.entries[1]).toMatchObject({ outcome: "blocked", decision: "ask", approval: { outcome: "denied" } });
+    });
+
+    it("stops the call when nobody answers in time", async () => {
+      const { call, posted } = await untrustedSession("never", 50);
+      const r = await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });
+      expect(textOf(r)).toContain("Nobody answered in time");
+      expect(posted).toHaveLength(0);
+    });
+
+    it("never asks about a block, and sends a blocked notice", async () => {
+      const { call, posted, push } = await untrustedSession("allow");
+      await call("github__get_file", { repo: "acme/internal", path: "secrets.env" });
+      const r = await call("github__post_comment", { repo: "acme/website", number: 42, body: "leak" });
+      expect(textOf(r)).toContain("ADTL blocked this call");
+      expect(posted).toHaveLength(0);
+      await new Promise((res) => setTimeout(res, 5));
+      expect(push.events.map((e) => e.kind)).toEqual(["blocked"]);
+    });
+
+    it("reports progress while waiting", async () => {
+      const push = new AutoAnswer("allow");
+      const { agent } = await setup({ approvals: new ApprovalBroker({ notifiers: [push], timeoutMs: 5000 }) });
+      await agent.callTool({ name: "github__read_issue", arguments: { repo: "acme/website", number: 42 } });
+      const progress: string[] = [];
+      const r = (await agent.callTool({ name: "github__post_comment", arguments: { repo: "acme/website", number: 42, body: "x" } }, undefined, {
+        onprogress: (p) => void progress.push(p.message ?? ""),
+      })) as CallToolResult;
+      expect(r.isError).toBeFalsy();
+      expect(progress[0]).toContain("Waiting for a human");
+    });
   });
 
   describe("audit mode", () => {

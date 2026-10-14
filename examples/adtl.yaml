@@ -41,6 +41,10 @@ policy:
       reason: Private data must not reach a public tool
 
 gateway:
+  # Optional: ask on your phone instead of blocking "ask" decisions.
+  # Install the ntfy app, subscribe to a long random topic, and export ADTL_NTFY_TOPIC.
+  # approvals:
+  #   ntfy: { topic: "${ADTL_NTFY_TOPIC}" }
   upstreams:
     github:                       # must match servers.github above
       command: node

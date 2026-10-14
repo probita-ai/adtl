@@ -174,10 +174,11 @@ export class InterceptorInvoker {
       const r = s.value as ValidationResult;
       out.results.push(r);
       if (r.valid || r.severity !== "error" || this.isAudit(i)) return;
-      if (!out.blocked) {
+      // Keep the strictest rejection, so an "ask" never hides another validator's "block".
+      if (!out.blocked || out.blocked.decision === "ask") {
         const decision = (r.info?.[DECISION_INFO_KEY] as Decision | undefined) ?? "block";
         const reason = r.messages?.map((m) => m.message).join("; ") || `${i.definition.name} rejected the call`;
-        out.blocked = { interceptor: i.definition.name, decision, reason };
+        if (!out.blocked || decision === "block") out.blocked = { interceptor: i.definition.name, decision, reason };
       }
       ok = false;
     });

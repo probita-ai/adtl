@@ -19,6 +19,8 @@ export interface AuditEntry {
   decision?: string;
   /** Present when the gateway ran in audit mode: nothing was stopped or changed. */
   mode?: "audit";
+  /** Present when a human was asked: outcome, channel, approver (if known) and wait time. */
+  approval?: { outcome: string; channel?: string; approver?: string; waitedMs: number };
   reason?: string;
   matched?: unknown;
   callHash?: unknown;
