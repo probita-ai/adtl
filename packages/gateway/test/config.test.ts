@@ -49,6 +49,15 @@ gateway:
     expect(c.gateway.upstreams.github).toEqual({ command: "node", args: ["server.mjs"], env: {} });
     expect(c.gateway.upstreams.docs).toEqual({ url: "https://example.com/mcp", headers: {} });
     expect(c.gateway.interceptorTimeoutMs).toBe(5000);
+    expect(c.gateway.mode).toBe("active");
+  });
+
+  it("accepts mode: audit and rejects other modes", async () => {
+    const c = await loadGatewayConfig(writeConfig("gateway: { mode: audit, upstreams: { a: { command: x } } }\n"));
+    expect(c.gateway.mode).toBe("audit");
+    await expect(loadGatewayConfig(writeConfig("gateway: { mode: off, upstreams: { a: { command: x } } }\n"))).rejects.toThrow(
+      /gateway.mode/,
+    );
   });
 
   it("requires a gateway section with at least one upstream", async () => {

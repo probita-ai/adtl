@@ -15,7 +15,10 @@ export interface AuditEntry {
   tool: string;
   /** Final outcome of the call. */
   outcome: "forwarded" | "blocked" | "upstream_error";
+  /** The policy's decision. In audit mode a call can be forwarded with decision "ask" or "block". */
   decision?: string;
+  /** Present when the gateway ran in audit mode: nothing was stopped or changed. */
+  mode?: "audit";
   reason?: string;
   matched?: unknown;
   callHash?: unknown;

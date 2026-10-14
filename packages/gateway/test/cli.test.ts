@@ -64,6 +64,27 @@ describe.skipIf(!existsSync(CLI))("adtl-gateway CLI (real processes)", () => {
     expect(entries[2]).toMatchObject({ decision: "block", sessionLabel: { integrity: "untrusted", confidentiality: "private" } });
   }, 20_000);
 
+  it("--audit forwards everything and logs what would have been stopped", async () => {
+    const t = tempConfig();
+    const agent = new Client({ name: "e2e-agent", version: "0.0.0" });
+    await agent.connect(
+      new StdioClientTransport({ command: process.execPath, args: [CLI, "--config", t.config, "--audit"], env: getDefaultEnvironment(), stderr: "pipe" }),
+    );
+    clients.push(agent);
+    const call = (name: string, args: Record<string, unknown>) => agent.callTool({ name, arguments: args }) as Promise<CallToolResult>;
+    await call("github__get_file", { repo: "acme/internal", path: "secrets.env" });
+    const leak = await call("github__post_comment", { repo: "acme/website", number: 42, body: "STRIPE_KEY=..." });
+    expect(leak.isError).toBeFalsy();
+
+    await agent.close();
+    expect(existsSync(t.posted)).toBe(true);
+    const entries = readFileSync(t.audit, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(entries.map((e) => [e.tool, e.outcome, e.decision, e.mode])).toEqual([
+      ["get_file", "forwarded", "allow", "audit"],
+      ["post_comment", "forwarded", "block", "audit"],
+    ]);
+  }, 20_000);
+
   it("runs the example config as-is", async () => {
     const agent = new Client({ name: "e2e-agent", version: "0.0.0" });
     await agent.connect(new StdioClientTransport({ command: process.execPath, args: [CLI, "--config", EXAMPLE], stderr: "pipe" }));

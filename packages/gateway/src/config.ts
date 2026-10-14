@@ -3,6 +3,7 @@
  *
  *   gateway:
  *     audit: ./adtl-audit.jsonl          # optional JSONL audit log
+ *     mode: audit                        # optional: log what would be stopped, stop nothing
  *     upstreams:
  *       github:                          # id must match `servers.github` in the label config
  *         command: npx
@@ -52,6 +53,11 @@ export const GatewayConfigSchema = z
     interceptors: StdioUpstreamSchema.optional(),
     /** Path of a JSONL audit log. Relative paths are resolved against the config file's directory. */
     audit: z.string().min(1).optional(),
+    /**
+     * `active` (default) enforces the policy. `audit` stops and changes nothing, and
+     * logs what would have been stopped: for trying a policy out safely.
+     */
+    mode: z.enum(["active", "audit"]).default("active"),
     /** Timeout for each interceptor invocation, in milliseconds. */
     interceptorTimeoutMs: z.number().int().positive().default(5000),
   })

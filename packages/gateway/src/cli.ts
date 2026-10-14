@@ -3,7 +3,7 @@
  * adtl-gateway: an MCP server for your agent that proxies to your real MCP
  * servers through ADTL's interceptors.
  *
- *   adtl-gateway --config adtl.yaml
+ *   adtl-gateway --config adtl.yaml [--audit]
  *
  * Point your MCP client (e.g. Claude Code's .mcp.json) at this command.
  * Logs go to stderr; stdout carries MCP JSON-RPC only.
@@ -13,24 +13,34 @@ import { EnvExpansionError } from "./config.js";
 import { GATEWAY_VERSION } from "./gateway.js";
 import { GatewayConfigError, loadGatewayConfig, startGateway } from "./startup.js";
 
-const USAGE = `Usage: adtl-gateway --config <adtl.yaml>
+const USAGE = `Usage: adtl-gateway --config <adtl.yaml> [--audit]
 
 Runs an MCP server over stdio that forwards tool calls to the upstream
 servers in the config, checking and labeling each call with ADTL.
 
 Options:
   -c, --config <path>  ADTL config file with a gateway: section. Required.
+      --audit          Log what would be stopped, but stop nothing
+                       (same as gateway.mode: audit).
   -v, --version        Print the version and exit.
   -h, --help           Show this help.`;
 
-function parseArgs(argv: string[]): { config?: string; help?: boolean; version?: boolean } {
-  const out: { config?: string; help?: boolean; version?: boolean } = {};
+interface Args {
+  config?: string;
+  audit?: boolean;
+  help?: boolean;
+  version?: boolean;
+}
+
+function parseArgs(argv: string[]): Args {
+  const out: Args = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "-h" || a === "--help") out.help = true;
     else if (a === "-v" || a === "--version") out.version = true;
     else if (a === "-c" || a === "--config") out.config = argv[++i];
     else if (a?.startsWith("--config=")) out.config = a.slice("--config=".length);
+    else if (a === "--audit") out.audit = true;
     else throw new GatewayConfigError(`Unknown argument: ${a}\n\n${USAGE}`);
   }
   return out;
@@ -44,6 +54,7 @@ async function main(): Promise<void> {
   if (!args.config) throw new GatewayConfigError(`Missing --config\n\n${USAGE}`);
 
   const loaded = await loadGatewayConfig(args.config);
+  if (args.audit) loaded.gateway.mode = "audit";
   const started = await startGateway(loaded);
   const server = started.gateway.createServer();
 

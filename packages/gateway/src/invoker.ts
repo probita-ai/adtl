@@ -9,6 +9,9 @@
  * Only `severity: "error"` blocks. Audit-mode interceptors never block, and
  * their mutations are not applied. An interceptor that fails (error or
  * timeout) blocks the message unless it declares `failOpen: true`.
+ *
+ * The invoker may override every interceptor's `mode`, as SEP-2624 allows
+ * (e.g. audit in staging, active in production).
  */
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
@@ -34,6 +37,8 @@ function request(client: Client, method: string, params: unknown, timeout: numbe
   const r = client.request as unknown as (req: unknown, schema: unknown, opts: unknown) => Promise<Loose>;
   return r.call(client, { method, params }, AnyResult, { timeout });
 }
+
+export type InterceptorMode = NonNullable<InterceptorDefinition["mode"]>;
 
 export interface BoundInterceptor {
   client: Client;
@@ -76,6 +81,8 @@ export class InterceptorInvoker {
   constructor(
     private readonly interceptors: BoundInterceptor[],
     private readonly timeoutMs = 5000,
+    /** Overrides the mode every interceptor declares. */
+    readonly modeOverride?: InterceptorMode,
   ) {}
 
   /** Discover the interceptors an interceptor server offers. */
@@ -103,6 +110,10 @@ export class InterceptorInvoker {
     return out;
   }
 
+  private isAudit(i: BoundInterceptor): boolean {
+    return (this.modeOverride ?? i.definition.mode) === "audit";
+  }
+
   private select(type: InterceptorDefinition["type"], event: string, phase: Phase): BoundInterceptor[] {
     return this.interceptors.filter((i) => i.definition.type === type && hooks(i.definition, event, phase));
   }
@@ -120,7 +131,7 @@ export class InterceptorInvoker {
   /** Handle an interceptor failure. Returns false if the chain must stop. */
   private failed(i: BoundInterceptor, err: unknown, out: ChainOutcome): boolean {
     const msg = `${i.definition.name} failed: ${err instanceof Error ? err.message : String(err)}`;
-    if (i.definition.mode === "audit" || i.definition.failOpen === true) {
+    if (this.isAudit(i) || i.definition.failOpen === true) {
       out.warnings.push(msg);
       return true;
     }
@@ -143,7 +154,7 @@ export class InterceptorInvoker {
         continue;
       }
       out.results.push(r);
-      if (i.definition.mode !== "audit" && r.modified) payload = r.payload;
+      if (!this.isAudit(i) && r.modified) payload = r.payload;
     }
     out.payload = payload;
     return true;
@@ -162,7 +173,7 @@ export class InterceptorInvoker {
       }
       const r = s.value as ValidationResult;
       out.results.push(r);
-      if (r.valid || r.severity !== "error" || i.definition.mode === "audit") return;
+      if (r.valid || r.severity !== "error" || this.isAudit(i)) return;
       if (!out.blocked) {
         const decision = (r.info?.[DECISION_INFO_KEY] as Decision | undefined) ?? "block";
         const reason = r.messages?.map((m) => m.message).join("; ") || `${i.definition.name} rejected the call`;

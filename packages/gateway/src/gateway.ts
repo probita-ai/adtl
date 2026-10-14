@@ -9,6 +9,10 @@
  * When a call is stopped, the agent receives a normal tool result with
  * `isError: true` explaining why, so the model can tell the user. In v0.1 an
  * "ask" decision is treated as a block; approvals arrive in v0.2.
+ *
+ * In audit mode (the invoker runs every interceptor with `mode: "audit"`)
+ * nothing is stopped or changed: calls the policy would stop are forwarded,
+ * and the audit log records what would have happened.
  */
 import { randomUUID } from "node:crypto";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -24,7 +28,7 @@ import type { AuditEntry, AuditSink } from "./audit.js";
 import { TOOL_SEPARATOR } from "./config.js";
 import type { Blocked, ChainOutcome, InterceptorInvoker } from "./invoker.js";
 
-export const GATEWAY_VERSION = "0.1.0";
+export const GATEWAY_VERSION = "0.1.1";
 
 /** `_meta` key on gateway-generated error results describing why a call was stopped. */
 export const GATEWAY_DECISION_KEY = "adtl/gateway";
@@ -160,6 +164,14 @@ export class AdtlGateway {
       return textError(blockedMessage(req.blocked), { ...req.blocked, callHash: policy.callHash });
     }
     const forwarded = (req.payload as typeof requestPayload).params;
+    const decision = policy["adtl/decision"] as string | undefined;
+    const audit = this.invoker.modeOverride === "audit";
+    // Only set in audit mode, for calls the policy would have stopped.
+    const wouldStop =
+      audit && decision !== undefined && decision !== "allow"
+        ? { reason: policy.reason as string | undefined, matched: policy.matched }
+        : undefined;
+    if (wouldStop) this.log.info(`audit: would ${decision} ${name}: ${wouldStop.reason}`);
 
     // 2. Forward to the upstream server.
     let result: CallToolResult;
@@ -167,7 +179,7 @@ export class AdtlGateway {
       result = (await client.callTool({ name: forwarded.name, arguments: forwarded.arguments })) as CallToolResult;
     } catch (err) {
       const reason = (err as Error).message;
-      finish({ outcome: "upstream_error", decision: "allow", reason, callHash: policy.callHash, warnings: req.warnings });
+      finish({ outcome: "upstream_error", ...(decision ? { decision } : {}), reason, callHash: policy.callHash, ...(audit ? { mode: "audit" as const } : {}), warnings: req.warnings });
       return textError(`The ${route.upstream} server returned an error: ${reason}`, { reason: "upstream_error" });
     }
 
@@ -187,7 +199,10 @@ export class AdtlGateway {
     const label = infoOf(res, "adtl.label");
     finish({
       outcome: "forwarded",
-      decision: (policy["adtl/decision"] as string | undefined) ?? "allow",
+      // Missing only if adtl.policy failed and was allowed to (audit mode); see warnings.
+      ...(decision ? { decision } : {}),
+      ...(wouldStop ?? {}),
+      ...(audit ? { mode: "audit" as const } : {}),
       callHash: policy.callHash,
       label: label.label,
       sessionLabel: label.sessionLabel,

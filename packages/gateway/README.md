@@ -71,10 +71,21 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 |---|---|
 | `gateway.upstreams.<id>` | A stdio server (`command`, `args`, `env`, `cwd`) or an HTTP server (`url`, `headers`). The `<id>` must match the key under `servers:`. |
 | `gateway.audit` | Path of a JSONL audit log, relative to the config file |
+| `gateway.mode` | `active` (default) or `audit`. See [Trying a policy safely](#trying-a-policy-safely). |
 | `gateway.interceptorTimeoutMs` | Timeout per interceptor call (default 5000) |
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
 
 `${VAR}` in commands, args, env, URLs and headers is read from the environment, so secrets stay out of the file.
+
+### Trying a policy safely
+
+Run in audit mode first to see what your policy would stop, without stopping anything:
+
+```sh
+adtl-gateway --config adtl.yaml --audit
+```
+
+or set `gateway.mode: audit` in the file. In audit mode every call goes through and results are not changed. Labels are still tracked, so the decisions are the same as in active mode. Each line in the audit log gets `"mode": "audit"`, and a call the policy would have stopped is logged as `"outcome": "forwarded"` with `"decision": "ask"` or `"block"`, the reason and the matching rules. Once the log looks right, remove the flag.
 
 ## How it works
 
@@ -86,7 +97,7 @@ agent ──▶ adtl-gateway ──▶ upstream MCP servers
                     adtl.label   labels the result after it returns
 ```
 
-The gateway fails closed. If an interceptor errors or times out, the call is stopped. If a result can't be labeled, it is withheld. If the interceptors are missing, the gateway refuses to start.
+The gateway fails closed. If an interceptor errors or times out, the call is stopped. If a result can't be labeled, it is withheld. If the interceptors are missing, the gateway refuses to start. (In audit mode such failures are logged as warnings instead.)
 
 ## Limits of this version
 

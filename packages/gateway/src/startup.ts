@@ -125,8 +125,10 @@ export async function startGateway(
         throw new GatewayConfigError(`The interceptor server does not offer ${required}; refusing to start without it`);
       }
     }
-    const invoker = new InterceptorInvoker(bound, loaded.gateway.interceptorTimeoutMs);
+    const audit = loaded.gateway.mode === "audit";
+    const invoker = new InterceptorInvoker(bound, loaded.gateway.interceptorTimeoutMs, audit ? "audit" : undefined);
     log.info(`interceptors: ${names.join(", ")}`);
+    if (audit) log.warn("audit mode: calls are logged but never stopped or changed");
 
     // 2. Upstream servers. One failing upstream does not stop the others.
     const upstreams = new Map<string, Client>();
@@ -149,8 +151,8 @@ export async function startGateway(
     if (upstreams.size === 0) throw new GatewayConfigError("No upstream server could be connected");
     log.info(`upstreams: ${[...upstreams.keys()].join(", ")}`);
 
-    const audit = loaded.gateway.audit ? new JsonlAuditLog(resolve(baseDir, loaded.gateway.audit)) : undefined;
-    const gateway = new AdtlGateway({ upstreams, invoker, ...(audit ? { audit } : {}), logger: log });
+    const auditLog = loaded.gateway.audit ? new JsonlAuditLog(resolve(baseDir, loaded.gateway.audit)) : undefined;
+    const gateway = new AdtlGateway({ upstreams, invoker, ...(auditLog ? { audit: auditLog } : {}), logger: log });
     return { gateway, close: closeAll };
   } catch (err) {
     await closeAll();

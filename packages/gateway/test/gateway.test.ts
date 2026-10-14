@@ -26,7 +26,7 @@ async function linked(server: { connect(t: unknown): Promise<void> }, name: stri
   return client;
 }
 
-async function setup(opts: { interceptorsServer?: { connect(t: unknown): Promise<void> } } = {}) {
+async function setup(opts: { interceptorsServer?: { connect(t: unknown): Promise<void> }; mode?: "audit" } = {}) {
   const posted: unknown[] = [];
   const config = parseConfigText(readFileSync(CONFIG, "utf8"));
   const icClient = await linked(opts.interceptorsServer ?? createInterceptorServer(new AdtlInterceptors({ config })), "gw→interceptors");
@@ -34,7 +34,7 @@ async function setup(opts: { interceptorsServer?: { connect(t: unknown): Promise
   const audit = new MemoryAuditLog();
   const gateway = new AdtlGateway({
     upstreams: new Map([["github", github]]),
-    invoker: new InterceptorInvoker(await InterceptorInvoker.discover(icClient)),
+    invoker: new InterceptorInvoker(await InterceptorInvoker.discover(icClient), 5000, opts.mode),
     sessionId: "test-session",
     audit,
     logger: { info: () => {}, warn: () => {} },
@@ -119,5 +119,55 @@ describe("adtl-gateway", () => {
     expect(r.isError).toBe(true);
     expect(textOf(r)).toContain("adtl.policy failed");
     expect(posted).toHaveLength(0);
+  });
+
+  describe("audit mode", () => {
+    it("lets the attack through but logs every call the policy would have stopped", async () => {
+      const { call, posted, audit } = await setup({ mode: "audit" });
+      await call("github__read_issue", { repo: "acme/website", number: 42 });
+      const ask = await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });
+      expect(ask.isError).toBeFalsy();
+      await call("github__get_file", { repo: "acme/internal", path: "secrets.env" });
+      const leak = await call("github__post_comment", { repo: "acme/website", number: 42, body: "leak" });
+      expect(leak.isError).toBeFalsy();
+      expect(posted).toHaveLength(2);
+
+      expect(audit.entries.map((e) => [e.tool, e.outcome, e.decision, e.mode])).toEqual([
+        ["read_issue", "forwarded", "allow", "audit"],
+        ["post_comment", "forwarded", "ask", "audit"],
+        ["get_file", "forwarded", "allow", "audit"],
+        ["post_comment", "forwarded", "block", "audit"],
+      ]);
+      // Labels keep accumulating, so the decisions match what active mode would do.
+      expect(audit.entries[3]).toMatchObject({
+        matched: ["private-stays-private"],
+        reason: "Private data must not reach a public tool",
+        sessionLabel: { integrity: "untrusted", confidentiality: "private" },
+      });
+      expect(audit.entries[0]).not.toHaveProperty("reason");
+    });
+
+    it("does not change results", async () => {
+      const { call } = await setup({ mode: "audit" });
+      const issue = await call("github__read_issue", { repo: "acme/website", number: 42 });
+      expect(issue._meta?.[TRUST_KEY]).toBeUndefined();
+    });
+
+    it("forwards the call when an interceptor fails, with a warning", async () => {
+      const config = parseConfigText(readFileSync(CONFIG, "utf8"));
+      const core = new AdtlInterceptors({ config });
+      const original = core.invoke.bind(core);
+      core.invoke = (p) => {
+        if (p.name === "adtl.policy") throw new Error("boom");
+        return original(p);
+      };
+      const { call, posted, audit } = await setup({ interceptorsServer: createInterceptorServer(core), mode: "audit" });
+      const r = await call("github__post_comment", { repo: "acme/website", number: 1, body: "hi" });
+      expect(r.isError).toBeFalsy();
+      expect(posted).toHaveLength(1);
+      expect(audit.entries[0]).toMatchObject({ outcome: "forwarded", mode: "audit" });
+      expect(audit.entries[0]).not.toHaveProperty("decision");
+      expect(audit.entries[0]!.warnings?.[0]).toContain("adtl.policy failed");
+    });
   });
 });

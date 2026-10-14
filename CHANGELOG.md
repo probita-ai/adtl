@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1 — experimental
+
+### `@adtl/gateway`
+- Audit mode: `gateway.mode: audit` or `adtl-gateway --audit` logs what the policy would stop, without stopping or changing anything. Use it to try a policy out safely. Audit log entries get `"mode": "audit"`, and calls the policy would have stopped keep their `decision`, `reason` and `matched` rules.
+- `InterceptorInvoker` takes an optional mode override for every interceptor, as SEP-2624 allows invokers to do.
+- Audit log entries no longer report `decision: "allow"` when the policy result is missing.
+
 ## 0.1.0 — experimental
 
 First public release. Built on draft MCP proposals that are still changing, so expect breaking changes.
