@@ -1,0 +1,79 @@
+# Publishes @adtl/labels, @adtl/interceptors and @adtl/gateway to npm when a
+# version tag (v0.3.2, v0.4.0-rc.1, ...) is pushed to the public repo, then
+# creates the GitHub release from that version's CHANGELOG section.
+#
+# npm trusted publishing (OIDC): no npm token is stored anywhere. Each package
+# on npmjs.com must name this repo and this workflow file (release.yml) as its
+# trusted publisher. Provenance is attached automatically.
+#
+# To release: bump all three packages and the VERSION constants, add a
+# CHANGELOG section, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Tags reach the private dev repo too; only the public repo publishes.
+    if: github.repository == 'probita-ai/adtl'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11
+      - name: Check the tag matches the packages
+        run: node scripts/release.mjs check "$GITHUB_REF_NAME"
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run test:pack
+      - name: Publish to npm (dependencies first; versions already published are skipped)
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dist_tag=latest
+          case "$version" in *-*) dist_tag=next ;; esac
+          for p in labels interceptors gateway; do
+            name="@adtl/$p"
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already on npm, skipping"
+            else
+              npm publish -w "packages/$p" --tag "$dist_tag"
+            fi
+          done
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists"
+            exit 0
+          fi
+          node scripts/release.mjs notes "$GITHUB_REF_NAME" > notes.md
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME (experimental)" --notes-file notes.md --verify-tag $prerelease

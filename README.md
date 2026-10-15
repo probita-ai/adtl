@@ -103,6 +103,8 @@ npm run demo
 
 Requires Node.js 20 or later.
 
+Releases are published by [GitHub Actions](.github/workflows/release.yml) when a version tag is pushed: bump all three packages and their `VERSION` constants together, add a `CHANGELOG.md` section, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow checks that the tag and versions agree, runs the tests, publishes to npm with provenance, and creates the GitHub release.
+
 ## License
 
 Apache-2.0
