@@ -26,9 +26,20 @@ The demo runs the same agent twice against a fake GitHub server. Without ADTL th
 
 ## Use it
 
-```sh
-claude mcp add adtl -- npx -y @adtl/gateway --config /absolute/path/to/adtl.yaml
-```
+1. List your MCP servers under `gateway.upstreams` in an `adtl.yaml` (see [the example](examples/adtl.yaml)).
+2. Let ADTL draft a labeling rule for every tool, then review it:
+
+   ```sh
+   npx -y @adtl/gateway init -c adtl.yaml           # print the draft, change nothing
+   npx -y @adtl/gateway init -c adtl.yaml --write   # save it (original kept as adtl.yaml.bak)
+   ```
+
+   Presets cover the GitHub, filesystem and fetch servers; other servers get a cautious draft from their MCP tool hints.
+3. Point your agent at the gateway instead of the servers:
+
+   ```sh
+   claude mcp add adtl -- npx -y @adtl/gateway --config /absolute/path/to/adtl.yaml
+   ```
 
 See [`@adtl/gateway`](packages/gateway) for the config format, and [examples/claude-code](examples/claude-code) for a step-by-step Claude Code walkthrough with the fake GitHub server.
 
@@ -48,11 +59,14 @@ v0.1.1 adds audit mode (`adtl-gateway --audit`): try a policy out by logging wha
 
 v0.2 adds human approvals: an "ask" decision sends a push notification to your phone with Allow / Deny buttons (via [ntfy](https://ntfy.sh)), plus optional email notices. See [Approvals](packages/gateway#approvals).
 
+v0.3 makes it usable on real setups. Resources and prompts now pass through the gateway and are labeled like tool results, and `adtl-gateway init` drafts your config from the servers you already use.
+
 Planned next:
 
-- **v0.3:** authorization (RBAC / ABAC): who may call a tool and who may approve, using existing engines such as Cedar and OpenFGA
+- **Rest of v0.3:** a Claude Code hooks adapter, so built-in tools such as web fetch and shell can't bypass the labels, and a demo against the real GitHub MCP server
 - **v0.4:** a label ledger, so labels survive when data moves into files and memory
 - **v0.5:** labels carried across sub-agents and A2A, plus interop with FIDES
+- **Later:** authorization (RBAC / ABAC): who may call a tool and who may approve, using existing engines such as Cedar and OpenFGA
 
 Help is very welcome: see the [open issues](https://github.com/probita-ai/adtl/issues), especially the ones marked [help wanted](https://github.com/probita-ai/adtl/labels/help%20wanted).
 

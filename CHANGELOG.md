@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — experimental
 
 ### `@adtl/gateway`
 - Proxies resources (`resources/list`, `resources/templates/list`, `resources/read`) and prompts (`prompts/list`, `prompts/get`), so content from them is labeled and counts toward the session label. Prompts are renamed `<server>__<prompt>`, like tools. Resource URIs are passed through unchanged and routed to the upstream that lists them, or whose template matches. A URI more than one upstream could serve is refused, because ADTL couldn't tell which server to label it as.
