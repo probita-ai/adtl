@@ -26,12 +26,15 @@ The demo runs the same agent twice against a fake GitHub server. Without ADTL th
 
 ## Use it
 
-1. List your MCP servers under `gateway.upstreams` in an `adtl.yaml` (see [the example](examples/adtl.yaml)).
+1. List your MCP servers under `gateway.upstreams` in an `adtl.yaml` (see [the example](examples/adtl.yaml)). If they're already in Claude Code's `.mcp.json`, skip this: step 2 with `--from .mcp.json` imports them.
 2. Let ADTL draft a labeling rule for every tool, then review it:
 
    ```sh
    npx -y @adtl/gateway init -c adtl.yaml           # print the draft, change nothing
    npx -y @adtl/gateway init -c adtl.yaml --write   # save it (original kept as adtl.yaml.bak)
+
+   # or, starting from Claude Code: import .mcp.json, and point it at the gateway
+   npx -y @adtl/gateway init -c adtl.yaml --from .mcp.json --write
    ```
 
    Presets cover the GitHub, filesystem and fetch servers; other servers get a cautious draft from their MCP tool hints.
@@ -65,9 +68,11 @@ v0.3 makes it usable on real setups. Resources and prompts now pass through the 
 
 v0.3.1 adds Claude Code hooks: `adtl-gateway hook` labels and checks Claude Code's built-in tools, such as web fetch and shell, sharing one session label with the gateway, so they can't bypass it. See [Claude Code: cover the built-in tools too](packages/gateway#claude-code-cover-the-built-in-tools-too).
 
+v0.3.2 adds `adtl-gateway init --from .mcp.json`: import the MCP servers you already use in Claude Code, and point Claude Code at the gateway.
+
 Planned next:
 
-- **Rest of v0.3:** a demo against the real GitHub MCP server, and importing Claude Code's MCP server list in `init`
+- **Rest of v0.3:** a demo against the real GitHub MCP server
 - **v0.4:** a label ledger, so labels survive when data moves into files and memory
 - **v0.5:** labels carried across sub-agents and A2A, plus interop with FIDES
 - **Later:** authorization (RBAC / ABAC): who may call a tool and who may approve, using existing engines such as Cedar and OpenFGA

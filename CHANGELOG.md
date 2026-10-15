@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 — experimental
+
+### `@adtl/gateway`
+- `adtl-gateway init --from .mcp.json`: imports the stdio and HTTP servers of an MCP client config (Claude Code's `.mcp.json`, or any file with `mcpServers`) into `gateway.upstreams`, creating `adtl.yaml` if it doesn't exist, then drafts rules as before. With `--write`, the client config is changed to run the gateway in place of the imported servers (original kept as `.bak`). SSE servers, entries that already run the gateway, and upstreams already in `adtl.yaml` are left alone.
+- `${VAR:-default}` in the gateway config uses `default` when `VAR` is unset or empty, as in Claude Code's `.mcp.json`.
+- `init` no longer folds long values such as paths across lines.
+
 ## 0.3.1 — experimental
 
 ### `@adtl/gateway`

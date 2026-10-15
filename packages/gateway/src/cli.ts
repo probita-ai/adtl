@@ -4,7 +4,7 @@
  * servers through ADTL's interceptors.
  *
  *   adtl-gateway --config adtl.yaml [--audit]
- *   adtl-gateway init --config adtl.yaml [--write]
+ *   adtl-gateway init --config adtl.yaml [--from .mcp.json] [--write]
  *   adtl-gateway hook --config adtl.yaml [--gateway-server adtl]
  *
  * Point your MCP client (e.g. Claude Code's .mcp.json) at this command.
@@ -18,7 +18,7 @@ import { runInit, type InitResult } from "./init/run.js";
 import { GatewayConfigError, loadGatewayConfig, startGateway } from "./startup.js";
 
 const USAGE = `Usage: adtl-gateway --config <adtl.yaml> [--audit]
-       adtl-gateway init --config <adtl.yaml> [--write]
+       adtl-gateway init --config <adtl.yaml> [--from <.mcp.json>] [--write]
        adtl-gateway hook --config <adtl.yaml> [--gateway-server <name>]
 
 Runs an MCP server over stdio that forwards tool calls to the upstream
@@ -35,6 +35,11 @@ init:
   for each tool the config doesn't cover yet (presets for GitHub,
   filesystem and fetch; MCP tool hints otherwise). Existing entries are
   never changed. Prints the updated config; review it before using it.
+      --from <file>    First import the MCP servers of a client config (Claude
+                       Code's .mcp.json, or any file with "mcpServers") into
+                       gateway.upstreams, creating the config file if needed.
+                       With --write, that file is changed to run the gateway
+                       in place of the imported servers (original kept as .bak).
       --write          Update the config file in place (original kept as .bak).
 
 hook:
@@ -51,6 +56,7 @@ hook:
 
 interface Args {
   init?: boolean;
+  from?: string;
   hook?: boolean;
   gatewayServer?: string;
   write?: boolean;
@@ -73,6 +79,7 @@ function parseArgs(argv: string[]): Args {
     else if (a?.startsWith("--config=")) out.config = a.slice("--config=".length);
     else if (a === "--audit") out.audit = true;
     else if (a === "--write" && out.init) out.write = true;
+    else if (a === "--from" && out.init) out.from = argv[++i];
     else throw new GatewayConfigError(`Unknown argument: ${a}\n\n${USAGE}`);
   }
   return out;
@@ -84,7 +91,7 @@ async function main(): Promise<void> {
   if (args.help) return void console.log(USAGE);
   if (args.version) return void console.log(GATEWAY_VERSION);
   if (!args.config) throw new GatewayConfigError(`Missing --config\n\n${USAGE}`);
-  if (args.init) return init(args.config, args.write === true);
+  if (args.init) return init(args.config, args.write === true, args.from);
   if (args.hook) return hook(args.config, args.gatewayServer);
 
   const loaded = await loadGatewayConfig(args.config);
@@ -112,20 +119,32 @@ async function main(): Promise<void> {
 }
 
 function summarize(r: InitResult, path: string, write: boolean): string {
-  const lines = r.reports.map((s) => {
+  const lines: string[] = [];
+  if (r.mcp) {
+    const m = r.mcp;
+    for (const i of m.imported) lines.push(`  imported ${i.name}${i.id !== i.name ? ` as ${i.id}` : ""} from ${m.path}`);
+    for (const k of m.kept) lines.push(`  ${k.name}: already in the config as ${k.id}, kept as it is`);
+    for (const s of m.skipped) lines.push(`  ${s.name}: left in ${m.path} (${s.reason})`);
+    if (!m.imported.length && !m.kept.length) lines.push(`  nothing to import from ${m.path}`);
+  }
+  if (r.created) lines.push(`  ${write ? "created" : "would create"} ${path}`);
+  lines.push(...r.reports.map((s) => {
     const parts = [`${s.added.length} tools added`];
     if (s.kept.length) parts.push(`${s.kept.length} kept`);
     if (s.addedDefaults) parts.push("defaults added");
     if (s.stale.length) parts.push(`no longer offered: ${s.stale.join(", ")}`);
     return `  ${s.id} (${s.preset ? `preset ${s.preset}` : "from tool hints, review"}): ${parts.join("; ")}`;
-  });
+  }));
   for (const f of r.failed) lines.push(`  ${f.id}: could not connect, skipped (${f.error})`);
-  const changed = r.reports.some((s) => s.added.length || s.addedDefaults);
-  const tail = !changed
-    ? "Nothing to add."
-    : write
-      ? `Updated ${path} (original saved as ${path}.bak). Review every line marked "review".`
-      : "Nothing written. Review the config above, then re-run with --write.";
+  const changed = r.created || r.mcp?.changed || r.reports.some((s) => s.added.length || s.addedDefaults);
+  let tail: string;
+  if (!changed) tail = "Nothing to add.";
+  else if (!write) tail = "Nothing written. Review the config above, then re-run with --write.";
+  else {
+    tail = r.created ? `Wrote ${path}.` : `Updated ${path} (original saved as ${path}.bak).`;
+    if (r.mcp?.changed) tail += ` ${r.mcp.path} now runs the gateway (original saved as ${r.mcp.path}.bak); restart your MCP client.`;
+    tail += ' Review every line marked "review".';
+  }
   return `${lines.join("\n")}\n${tail}`;
 }
 
@@ -142,9 +161,12 @@ async function hook(config: string, gatewayServer?: string): Promise<void> {
   process.exitCode = out.exitCode;
 }
 
-async function init(path: string, write: boolean): Promise<void> {
-  const result = await runInit({ path, write });
-  if (!write) process.stdout.write(result.text);
+async function init(path: string, write: boolean, from?: string): Promise<void> {
+  const result = await runInit({ path, write, ...(from ? { from } : {}) });
+  if (!write) {
+    process.stdout.write(result.text);
+    if (result.mcp?.changed) process.stdout.write(`\n# ${result.mcp.path} with --write:\n${result.mcp.text.replace(/^/gm, "# ")}\n`);
+  }
   console.error(`[adtl-gateway] init\n${summarize(result, path, write)}`);
   if (result.failed.length && !result.reports.length) process.exitCode = 1;
 }

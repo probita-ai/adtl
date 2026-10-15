@@ -49,6 +49,12 @@ export async function loadGatewayConfig(path: string): Promise<LoadedConfig> {
   } catch (err) {
     throw new GatewayConfigError(`Cannot read config file ${abs}: ${(err as Error).message}`);
   }
+  return parseGatewayConfigText(text, abs);
+}
+
+/** Validate adtl.yaml text; `path` is where it lives (relative paths in it resolve against its directory). */
+export function parseGatewayConfigText(text: string, path: string): LoadedConfig {
+  const abs = resolve(path);
   let labels: AdtlConfig;
   try {
     labels = parseConfigText(text, abs);

@@ -15,6 +15,10 @@ describe("expandEnv", () => {
   it("replaces ${VAR}, keeps $${VAR} literal, and names missing variables", () => {
     expect(expandEnv("Bearer ${TOKEN}", { TOKEN: "abc" }, "x")).toBe("Bearer abc");
     expect(expandEnv("$${TOKEN}", {}, "x")).toBe("${TOKEN}");
+    expect(expandEnv("${PORT:-8080}", {}, "x")).toBe("8080");
+    expect(expandEnv("${PORT:-8080}", { PORT: "" }, "x")).toBe("8080");
+    expect(expandEnv("${PORT:-8080}", { PORT: "9" }, "x")).toBe("9");
+    expect(expandEnv("${EMPTY:-}", {}, "x")).toBe("");
     expect(() => expandEnv("${NOPE}", {}, "gateway.upstreams.github.env.GITHUB_TOKEN")).toThrow(EnvExpansionError);
     expect(() => expandEnv("${NOPE}", {}, "where")).toThrow("Environment variable NOPE is not set (used in where)");
   });

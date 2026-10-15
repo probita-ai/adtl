@@ -78,6 +78,23 @@ adtl-gateway init -c adtl.yaml --write   # update the file (original kept as adt
 
 Always review the result: a preset is a starting point, not a judgment about your data.
 
+#### Starting from Claude Code's `.mcp.json`
+
+If your servers are already set up in Claude Code, import them:
+
+```sh
+adtl-gateway init -c adtl.yaml --from .mcp.json           # print both files, change nothing
+adtl-gateway init -c adtl.yaml --from .mcp.json --write   # write them (originals kept as .bak)
+```
+
+- Every stdio and HTTP server in `.mcp.json` becomes an upstream, with its command, args, env, url and headers. `${VAR}` and `${VAR:-default}` keep working, because the gateway expands them the same way. Names that aren't valid upstream ids are adjusted (`docs.api` becomes `docs-api`).
+- `adtl.yaml` is created if it doesn't exist, with restrictive defaults and the two example policy rules; then rules are drafted for every tool as above.
+- With `--write`, the imported servers in `.mcp.json` are replaced by one `adtl` entry that runs `npx -y @adtl/gateway@<version> --config adtl.yaml`. Everything else in the file is kept. Restart Claude Code afterwards.
+- SSE servers stay in `.mcp.json`, because the gateway only speaks Streamable HTTP. So do entries that already run the gateway, and upstreams already in `adtl.yaml` are never changed. Re-running is safe.
+- Any file with `mcpServers` works, such as Claude Desktop's `claude_desktop_config.json`. Servers added with `claude mcp add` live in `~/.claude.json` instead; list them with `claude mcp list`.
+
+The gateway starts upstream servers with a minimal environment plus their `env:` entries, not your whole shell environment. If a server relied on a variable from your shell, add it under its `env:`, e.g. `GITHUB_TOKEN: "${GITHUB_TOKEN}"`.
+
 Labels only get stricter as a session goes on. A session that has read anything untrusted stays untrusted until the session ends.
 
 ### Policy

@@ -21,7 +21,8 @@
  *         to: you@example.com
  *
  * `${VAR}` in command, args, env, cwd, url, headers and approval settings is
- * replaced from the gateway's environment. A missing variable is a config error.
+ * replaced from the gateway's environment. A missing variable is a config error,
+ * unless a default is given: `${VAR:-default}`.
  */
 import { z } from "zod";
 import { EMAIL_EVENTS } from "./email.js";
@@ -125,11 +126,16 @@ export class EnvExpansionError extends Error {
   }
 }
 
-/** Replace `${VAR}` with values from `env`. `$${VAR}` keeps a literal `${VAR}`. */
+/**
+ * Replace `${VAR}` with values from `env`, and `${VAR:-default}` with `default`
+ * when VAR is unset or empty (as Claude Code's .mcp.json does). `$${VAR}` keeps
+ * a literal `${VAR}`.
+ */
 export function expandEnv(value: string, env: NodeJS.ProcessEnv, where: string): string {
-  return value.replace(/(\$?)\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, escape: string, name: string) => {
+  return value.replace(/(\$?)\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (match, escape: string, name: string, fallback?: string) => {
     if (escape) return match.slice(1);
     const v = env[name];
+    if (fallback !== undefined) return v === undefined || v === "" ? fallback : v;
     if (v === undefined) throw new EnvExpansionError(name, where);
     return v;
   });
