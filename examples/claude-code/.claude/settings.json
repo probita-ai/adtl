@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/../../packages/gateway/dist/cli.js\" hook --config \"$CLAUDE_PROJECT_DIR/../adtl.yaml\"",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/../../packages/gateway/dist/cli.js\" hook --config \"$CLAUDE_PROJECT_DIR/../adtl.yaml\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/../../packages/gateway/dist/cli.js\" hook --config \"$CLAUDE_PROJECT_DIR/../adtl.yaml\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

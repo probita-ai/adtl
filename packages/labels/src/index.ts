@@ -5,3 +5,4 @@ export * from "./config.js";
 export * from "./labeler.js";
 export * from "./policy.js";
 export * from "./session.js";
+export * from "./fileSession.js";

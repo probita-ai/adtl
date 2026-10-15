@@ -16,8 +16,10 @@ export interface AuditEntry {
   tool?: string;
   resource?: string;
   prompt?: string;
-  /** Final outcome of the call. */
-  outcome: "forwarded" | "blocked" | "upstream_error";
+  /** Final outcome of the call. "asked": handed to Claude Code's permission prompt by the hook. */
+  outcome: "forwarded" | "blocked" | "asked" | "upstream_error";
+  /** Present when the entry was written by the Claude Code hook rather than the gateway. */
+  via?: "claude-code-hook";
   /** The policy's decision. In audit mode a call can be forwarded with decision "ask" or "block". */
   decision?: string;
   /** Present when the gateway ran in audit mode: nothing was stopped or changed. */

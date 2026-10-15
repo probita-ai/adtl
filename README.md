@@ -41,6 +41,8 @@ The demo runs the same agent twice against a fake GitHub server. Without ADTL th
    claude mcp add adtl -- npx -y @adtl/gateway --config /absolute/path/to/adtl.yaml
    ```
 
+4. Optional, for Claude Code: add `adtl-gateway hook` to your hooks so built-in tools like `WebFetch` and `Bash` are checked too ([how](packages/gateway#claude-code-cover-the-built-in-tools-too)).
+
 See [`@adtl/gateway`](packages/gateway) for the config format, and [examples/claude-code](examples/claude-code) for a step-by-step Claude Code walkthrough with the fake GitHub server.
 
 ## Packages
@@ -61,9 +63,11 @@ v0.2 adds human approvals: an "ask" decision sends a push notification to your p
 
 v0.3 makes it usable on real setups. Resources and prompts now pass through the gateway and are labeled like tool results, and `adtl-gateway init` drafts your config from the servers you already use.
 
+Unreleased: Claude Code hooks (`adtl-gateway hook`) label and check Claude Code's built-in tools, such as web fetch and shell, sharing one session label with the gateway, so they can't bypass it. See [Claude Code: cover the built-in tools too](packages/gateway#claude-code-cover-the-built-in-tools-too).
+
 Planned next:
 
-- **Rest of v0.3:** a Claude Code hooks adapter, so built-in tools such as web fetch and shell can't bypass the labels, and a demo against the real GitHub MCP server
+- **Rest of v0.3:** a demo against the real GitHub MCP server, and importing Claude Code's MCP server list in `init`
 - **v0.4:** a label ledger, so labels survive when data moves into files and memory
 - **v0.5:** labels carried across sub-agents and A2A, plus interop with FIDES
 - **Later:** authorization (RBAC / ABAC): who may call a tool and who may approve, using existing engines such as Cedar and OpenFGA

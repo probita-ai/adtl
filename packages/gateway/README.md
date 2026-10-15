@@ -138,6 +138,46 @@ adtl-gateway --config adtl.yaml --audit
 
 or set `gateway.mode: audit` in the file. In audit mode every call goes through and results are not changed. Labels are still tracked, so the decisions are the same as in active mode. Each line in the audit log gets `"mode": "audit"`, and a call the policy would have stopped is logged as `"outcome": "forwarded"` with `"decision": "ask"` or `"block"`, the reason and the matching rules. Once the log looks right, remove the flag.
 
+## Claude Code: cover the built-in tools too
+
+The gateway only sees MCP calls. Claude Code's own tools (`WebFetch`, `WebSearch`, `Bash`, `Read`, ...) don't go through it, so a page fetched with `WebFetch` would not taint the session, and `Bash` could send data anywhere. `adtl-gateway hook` closes that gap. Add it to `.claude/settings.json` (or `~/.claude/settings.json` for every project):
+
+```json
+{
+  "hooks": {
+    "PreToolUse":         [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10, "onFailure": "block" }] }],
+    "PostToolUse":        [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }],
+    "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }]
+  }
+}
+```
+
+(A global install, `npm i -g @adtl/gateway` and then `adtl-gateway hook ...`, starts faster than `npx`.)
+
+What it does:
+
+- **After each tool runs**, it labels the output and adds it to the session label. Built-in tools are labeled as the server `claude-code`.
+- **Before each tool runs**, it checks the call against the same policy as the gateway. `block` denies the call. `ask` shows Claude Code's own permission prompt, so you approve in the terminal. `allow` gives no answer, so your normal Claude Code permissions still apply. ADTL never approves a call on its own.
+- **It shares one session label with the gateway.** Claude Code gives the gateway its session id (`CLAUDE_CODE_SESSION_ID`), and both keep the label in `~/.adtl/sessions/<id>.jsonl` (set `ADTL_SESSIONS_DIR` to change the directory). A `WebFetch` taints the session for `github__add_comment`, and a private file read through the gateway counts against a later `Bash` call. Labels last for the whole Claude Code session, including `--resume`.
+- **It covers MCP servers that skip the gateway**, such as connectors added in claude.ai. Their tools are labeled as their server name (`mcp__<server>__<tool>` → server `<server>`), so you can describe them under `servers:` like any upstream. The gateway's own tools (`mcp__adtl__*`) are skipped; pass `--gateway-server <name>` if you registered the gateway under another name.
+- **It fails closed.** If the hook can't decide, it exits with code 2, which stops the call.
+- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. The config needs no `gateway:` section if you only use the hooks.
+
+Built-in labels, which you can override under `servers.claude-code.tools`:
+
+| Tools | Result | Egress |
+|---|---|---|
+| `Read`, `Grep`, `Glob` | trusted, private | none |
+| `WebFetch`, `WebSearch` | untrusted, public | external (a URL or query can carry data out) |
+| `Bash`, `Monitor` | unknown, private | unknown |
+| `Agent` / `Task` | unknown, private | none (the sub-agent's own calls are checked too) |
+| `Write`, `Edit`, `TodoWrite`, other bookkeeping tools | trusted, public | none |
+| anything else | your `defaults` | unknown |
+
+With the [example policy](../../examples/adtl.yaml), `Bash` and `WebFetch` run freely in a fresh session, but ask first once the session has read untrusted content, because `no-public-write-after-untrusted` matches `tool.egress: [public, external, unknown]`.
+
+The hook also refuses `Write` and `Edit` on your ADTL config and session files, and asks before shell commands that mention the session directory, so the agent can't simply clear its own taint. This is a speed bump, not a sandbox.
+
 ## How it works
 
 ```
@@ -155,7 +195,8 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 - Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
 - Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
 - Approvals come from one push channel (ntfy). Other channels, approvals inside the MCP client, and approver roles are planned.
-- Labels last for one gateway process, which is one agent session. They are not carried into files, memory or other agents yet; that's planned for v0.4.
+- Labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). They are not carried into files, memory or other agents yet; that's planned for v0.4. A file written after reading untrusted content reads back as trusted.
+- The Claude Code hooks label tools by name, not by what they touched: a `Read` of a downloaded file is as trusted as a `Read` of your own code.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.
 
 ## Links

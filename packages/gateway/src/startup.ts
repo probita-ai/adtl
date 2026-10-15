@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { INTERCEPTORS_EXTENSION, LABEL_INTERCEPTOR, POLICY_INTERCEPTOR, parseConfigText } from "@adtl/interceptors";
-import type { AdtlConfig } from "@adtl/labels";
+import { defaultSessionsDir, type AdtlConfig } from "@adtl/labels";
 import { parse as parseYaml } from "yaml";
 import { ZodError } from "zod";
 import { ApprovalBroker, type Notifier } from "./approvals.js";
@@ -117,6 +117,16 @@ export function createApprovals(cfg: GatewayConfig, env: NodeJS.ProcessEnv, log:
   return new ApprovalBroker({ notifiers, timeoutMs: a.timeoutSeconds * 1000, log });
 }
 
+/**
+ * Under Claude Code, which passes `CLAUDE_CODE_SESSION_ID` to stdio MCP
+ * servers, the gateway uses that id and keeps session labels in files, so the
+ * Claude Code hooks (`adtl-gateway hook`) add to the same session label.
+ */
+export function sharedSession(env: NodeJS.ProcessEnv): { sessionId: string; dir: string } | undefined {
+  const sessionId = env.CLAUDE_CODE_SESSION_ID?.trim();
+  return sessionId ? { sessionId, dir: defaultSessionsDir(env) } : undefined;
+}
+
 export interface StartedGateway {
   gateway: AdtlGateway;
   close(): Promise<void>;
@@ -134,9 +144,15 @@ export async function startGateway(
 
   try {
     // 1. Interceptor server (out of process, per the Interceptors WG).
-    const icfg: StdioUpstream = loaded.gateway.interceptors
-      ? expandUpstream("interceptors", loaded.gateway.interceptors, env)
-      : { command: process.execPath, args: [bundledInterceptorsCli(), "--config", loaded.path], env: {} };
+    const shared = sharedSession(env);
+    const custom = loaded.gateway.interceptors && expandUpstream("interceptors", loaded.gateway.interceptors, env);
+    const icfg: StdioUpstream = custom
+      ? { ...custom, env: { ...custom.env, ...(shared ? { ADTL_SESSIONS_DIR: shared.dir } : {}) } }
+      : {
+          command: process.execPath,
+          args: [bundledInterceptorsCli(), "--config", loaded.path, ...(shared ? ["--sessions-dir", shared.dir] : [])],
+          env: {},
+        };
     const interceptors = await connectUpstream("interceptors", icfg, baseDir);
     clients.push(interceptors);
     if (!interceptors.getServerCapabilities()?.extensions?.[INTERCEPTORS_EXTENSION]) {
@@ -152,6 +168,7 @@ export async function startGateway(
     const audit = loaded.gateway.mode === "audit";
     const invoker = new InterceptorInvoker(bound, loaded.gateway.interceptorTimeoutMs, audit ? "audit" : undefined);
     log.info(`interceptors: ${names.join(", ")}`);
+    if (shared) log.info(`sharing session labels with Claude Code hooks (${shared.dir})`);
     if (audit) log.warn("audit mode: calls are logged but never stopped or changed");
 
     // 2. Upstream servers. One failing upstream does not stop the others.
@@ -178,6 +195,7 @@ export async function startGateway(
     const auditLog = loaded.gateway.audit ? new JsonlAuditLog(resolve(baseDir, loaded.gateway.audit)) : undefined;
     const approvals = createApprovals(loaded.gateway, env, log);
     const gateway = new AdtlGateway({
+      ...(shared ? { sessionId: shared.sessionId } : {}),
       upstreams,
       invoker,
       ...(auditLog ? { audit: auditLog } : {}),

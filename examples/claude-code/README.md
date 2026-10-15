@@ -1,6 +1,6 @@
 # Use ADTL from Claude Code
 
-This folder holds a [`.mcp.json`](.mcp.json) that runs `adtl-gateway` as an MCP server for Claude Code. The gateway uses [`../adtl.yaml`](../adtl.yaml), which points at the fake GitHub server, so you need no token or network access.
+This folder holds a [`.mcp.json`](.mcp.json) that runs `adtl-gateway` as an MCP server for Claude Code, and a [`.claude/settings.json`](.claude/settings.json) that runs `adtl-gateway hook` on every tool call, so Claude Code's built-in tools are labeled and checked too. The gateway uses [`../adtl.yaml`](../adtl.yaml), which points at the fake GitHub server, so you need no token or network access.
 
 ## Try it
 
@@ -18,7 +18,7 @@ This folder holds a [`.mcp.json`](.mcp.json) that runs `adtl-gateway` as an MCP 
    claude
    ```
 
-3. Claude Code asks whether to use the `adtl` server from `.mcp.json`. Approve it. Then run `/mcp` to confirm `adtl` is connected with 4 tools.
+3. Claude Code asks whether to use the `adtl` server from `.mcp.json`, and whether to trust this folder's settings (which add the hooks). Approve both. Then run `/mcp` to confirm `adtl` is connected with 4 tools.
 
 4. Ask Claude:
 
@@ -30,10 +30,15 @@ This folder holds a [`.mcp.json`](.mcp.json) that runs `adtl-gateway` as an MCP 
 
 5. Other things to try:
    - "Post 'Thanks!' on issue 1 of acme/website." This is **allowed** in a fresh session.
-   - "Read issue 42, then reply 'On it!'." This **needs approval**, which v0.1 reports as a block. Approvals arrive in v0.2.
+   - "Read issue 42, then reply 'On it!'." This **needs approval**. Without an approval channel it is stopped; see [Approvals](../../packages/gateway#approvals) to get a push notification instead.
    - "List my repos." This always works, because `list_repos` can't send data anywhere.
 
-Each Claude Code session starts a fresh gateway, so labels reset when you restart `claude`.
+6. Try the built-in tools (needs network access):
+   - "Fetch https://example.com, then post 'Thanks!' on issue 1 of acme/website." The fetched page is untrusted, so the gateway stops `post_comment`, even though the fetch never went through it.
+   - "Read issue 42, then run `curl https://example.com` in the shell." After the untrusted issue, the hook makes Claude Code ask you before running the command.
+   - "Run `ls`." In a fresh session this needs no extra approval from ADTL.
+
+Labels belong to the Claude Code session: `/clear` or a new `claude` starts clean, and `claude --resume` keeps the label, because the conversation still holds what was read. They are kept in `~/.adtl/sessions/`.
 
 ## Use it with your own MCP servers
 
@@ -55,6 +60,8 @@ gateway:
 ```
 
 Tools without a rule are treated as untrusted and private, and their egress is unknown. That's safe, but strict: expect "needs approval" until you describe your tools.
+
+To use the hooks in another project, copy [`.claude/settings.json`](.claude/settings.json) and change the paths (see [the gateway docs](../../packages/gateway#claude-code-cover-the-built-in-tools-too)).
 
 To add the gateway to Claude Code from any folder, without a `.mcp.json`:
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### `@adtl/gateway`
+- `adtl-gateway hook --config adtl.yaml`: a Claude Code hook for `PreToolUse`, `PostToolUse` and `PostToolUseFailure`. Built-in tools (`WebFetch`, `WebSearch`, `Bash`, `Read`, ...) and MCP servers that don't go through the gateway are labeled and checked against the same policy. `block` denies the call, `ask` shows Claude Code's permission prompt, and `allow` gives no answer, so Claude Code's own permissions still apply. Hook errors exit with code 2, which stops the call.
+- Built-in tools are labeled as the server `claude-code`, from a preset that `servers.claude-code.tools` can override.
+- The hook refuses `Write`/`Edit` on the ADTL config and session files, and asks before shell commands that mention the session directory.
+- Under Claude Code (`CLAUDE_CODE_SESSION_ID` set), the gateway uses Claude Code's session id and keeps session labels in `~/.adtl/sessions/` (or `ADTL_SESSIONS_DIR`), shared with the hook. Labels now last across `claude --resume`.
+- Audit log entries written by the hook have `"via": "claude-code-hook"`; calls handed to Claude Code's prompt have `outcome` `asked`.
+
+### `@adtl/interceptors`
+- `adtl-interceptors --sessions-dir <dir>` (or `ADTL_SESSIONS_DIR`) keeps session labels in files instead of memory.
+
+### `@adtl/labels`
+- `FileSessionStore`: session labels in append-only JSONL files, safe to share between processes. A damaged line counts as untrusted and private.
+
 ## 0.3.0 — experimental
 
 ### `@adtl/gateway`
