@@ -24,7 +24,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "adtl-interceptors": "./dist/cli.js"
+    "adtl-interceptors": "dist/cli.js"
   },
   "files": [
     "dist",

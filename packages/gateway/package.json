@@ -24,7 +24,7 @@
     }
   },
   "bin": {
-    "adtl-gateway": "./dist/cli.js"
+    "adtl-gateway": "dist/cli.js"
   },
   "files": [
     "dist",

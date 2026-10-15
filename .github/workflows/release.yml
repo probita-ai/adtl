@@ -54,7 +54,13 @@ jobs:
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "$name@$version is already on npm, skipping"
             else
-              npm publish -w "packages/$p" --tag "$dist_tag"
+              # npm silently drops package.json fields it considers invalid (e.g. a bin path starting with ./); refuse to publish if it would.
+              (cd "packages/$p" && npm publish --dry-run --tag "$dist_tag" 2>&1) | tee dry-run.log
+              if grep -q "auto-corrected" dry-run.log; then
+                echo "::error::npm would change $name's package.json while publishing; run 'npm pkg fix' in packages/$p"
+                exit 1
+              fi
+              (cd "packages/$p" && npm publish --tag "$dist_tag")
             fi
           done
 
