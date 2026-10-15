@@ -78,7 +78,7 @@ describe.skipIf(!existsSync(CLI))("adtl-interceptors CLI (stdio)", () => {
     const client = new Client({ name: "test-invoker", version: "0.0.0" });
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [CLI, "--config", EXAMPLE_CONFIG_PATH], stderr: "pipe" }));
     clients.push(client);
-    expect(client.getServerVersion()).toMatchObject({ name: "adtl-interceptors", version: "0.3.0" });
+    expect(client.getServerVersion()).toMatchObject({ name: "adtl-interceptors", version: "0.3.1" });
     const r = await call(client, "interceptor/invoke", policyCall("list_repos", {}, "s1"));
     expect(r.valid).toBe(true);
   });

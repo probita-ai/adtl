@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 — experimental
 
 ### `@adtl/gateway`
 - `adtl-gateway hook --config adtl.yaml`: a Claude Code hook for `PreToolUse`, `PostToolUse` and `PostToolUseFailure`. Built-in tools (`WebFetch`, `WebSearch`, `Bash`, `Read`, ...) and MCP servers that don't go through the gateway are labeled and checked against the same policy. `block` denies the call, `ask` shows Claude Code's permission prompt, and `allow` gives no answer, so Claude Code's own permissions still apply. Hook errors exit with code 2, which stops the call.

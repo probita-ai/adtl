@@ -63,7 +63,7 @@ v0.2 adds human approvals: an "ask" decision sends a push notification to your p
 
 v0.3 makes it usable on real setups. Resources and prompts now pass through the gateway and are labeled like tool results, and `adtl-gateway init` drafts your config from the servers you already use.
 
-Unreleased: Claude Code hooks (`adtl-gateway hook`) label and check Claude Code's built-in tools, such as web fetch and shell, sharing one session label with the gateway, so they can't bypass it. See [Claude Code: cover the built-in tools too](packages/gateway#claude-code-cover-the-built-in-tools-too).
+v0.3.1 adds Claude Code hooks: `adtl-gateway hook` labels and checks Claude Code's built-in tools, such as web fetch and shell, sharing one session label with the gateway, so they can't bypass it. See [Claude Code: cover the built-in tools too](packages/gateway#claude-code-cover-the-built-in-tools-too).
 
 Planned next:
 
