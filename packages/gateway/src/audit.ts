@@ -1,5 +1,5 @@
 /**
- * Append-only JSONL audit log. One line per tool call.
+ * Append-only JSONL audit log. One line per tool call, resource read or prompt get.
  *
  * Arguments and results are never written; the call is identified by its
  * hash, so the log can be shared without leaking the data it describes.
@@ -10,9 +10,12 @@ import { dirname } from "node:path";
 export interface AuditEntry {
   ts: string;
   sessionId: string;
-  event: "tools/call";
+  event: "tools/call" | "resources/read" | "prompts/get";
   server: string;
-  tool: string;
+  /** Exactly one of tool, resource or prompt is set, matching `event`. */
+  tool?: string;
+  resource?: string;
+  prompt?: string;
   /** Final outcome of the call. */
   outcome: "forwarded" | "blocked" | "upstream_error";
   /** The policy's decision. In audit mode a call can be forwarded with decision "ask" or "block". */

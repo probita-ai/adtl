@@ -1,7 +1,7 @@
 /**
  * ADTL's two interceptors, independent of any transport:
  *
- * - `adtl.label` (mutation, response phase of tools/call and resources/read):
+ * - `adtl.label` (mutation, response phase of tools/call, resources/read and prompts/get):
  *   labels the result, attaches the label under `_meta`, and records it in
  *   the session.
  * - `adtl.policy` (validation, request phase of tools/call): checks the call
@@ -16,6 +16,7 @@
  *   server          upstream MCP server id, as named in the ADTL config (required)
  *   tool            tool name, if the payload does not carry it
  *   resource        resource URI, if the payload does not carry it
+ *   prompt          prompt name, if the payload does not carry it
  *   toolAnnotations MCP tool annotations from tools/list, e.g. { openWorldHint: true }
  */
 import {
@@ -69,6 +70,7 @@ const CONFIG_SCHEMA: InterceptorDefinition["configSchema"] = {
     server: { type: "string", description: "Upstream MCP server id, as named in the ADTL config" },
     tool: { type: "string", description: "Tool name, if the payload does not carry it" },
     resource: { type: "string", description: "Resource URI, if the payload does not carry it" },
+    prompt: { type: "string", description: "Prompt name, if the payload does not carry it" },
     toolAnnotations: { type: "object", description: "MCP tool annotations from tools/list" },
   },
   required: ["server"],
@@ -78,9 +80,9 @@ const DEFINITIONS: InterceptorDefinition[] = [
   {
     name: LABEL_INTERCEPTOR,
     version: VERSION,
-    description: "Labels tool and resource results with ADTL trust labels (MCP trust-annotations) and records them per session",
+    description: "Labels tool, resource and prompt results with ADTL trust labels (MCP trust-annotations) and records them per session",
     type: "mutation",
-    hooks: [{ events: ["tools/call", "resources/read"], phase: "response" }],
+    hooks: [{ events: ["tools/call", "resources/read", "prompts/get"], phase: "response" }],
     failOpen: false,
     // Run after other response mutators (e.g. redaction) so the label describes the final content.
     priorityHint: { response: 1000 },
@@ -102,6 +104,7 @@ const InvocationConfigSchema = z
     server: z.string().min(1),
     tool: z.string().min(1).optional(),
     resource: z.string().min(1).optional(),
+    prompt: z.string().min(1).optional(),
     toolAnnotations: z.object({ openWorldHint: z.boolean().optional() }).passthrough().optional(),
   })
   .passthrough();
@@ -193,7 +196,10 @@ export class AdtlInterceptors {
 
     let tool: string | undefined;
     let resource: string | undefined;
-    if (params.event === "tools/call") {
+    let prompt: string | undefined;
+    if (params.event === "prompts/get") {
+      prompt = typeof rpcParams?.name === "string" ? rpcParams.name : config.prompt;
+    } else if (params.event === "tools/call") {
       tool = typeof rpcParams?.name === "string" ? rpcParams.name : config.tool;
       if (tool === undefined) {
         throw new InterceptorError(
@@ -211,6 +217,7 @@ export class AdtlInterceptors {
         server: config.server,
         ...(tool !== undefined ? { tool } : {}),
         ...(resource !== undefined ? { resource } : {}),
+        ...(prompt !== undefined ? { prompt } : {}),
         result,
         ...(config.toolAnnotations ? { toolAnnotations: config.toolAnnotations } : {}),
       },

@@ -36,7 +36,7 @@ describe("MCP interceptor server (in memory)", () => {
   it("declares the interceptors extension with supported events", async () => {
     const client = await connectInMemory();
     expect(client.getServerCapabilities()?.extensions?.[INTERCEPTORS_EXTENSION]).toEqual({
-      supportedEvents: ["tools/call", "resources/read"],
+      supportedEvents: ["tools/call", "resources/read", "prompts/get"],
     });
     expect(client.getServerCapabilities()?.tools).toBeUndefined();
   });

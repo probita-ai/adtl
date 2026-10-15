@@ -26,6 +26,8 @@ export interface Origin {
   tool?: string;
   /** Resource URI, for resources/read results. */
   resource?: string;
+  /** Prompt name, for prompts/get results. */
+  prompt?: string;
 }
 
 export interface Label {
@@ -61,7 +63,7 @@ export function higherConfidentiality(a: Confidentiality, b: Confidentiality): C
 }
 
 function originKey(o: Origin): string {
-  return `${o.server}\u0000${o.tool ?? ""}\u0000${o.resource ?? ""}`;
+  return `${o.server}\u0000${o.tool ?? ""}\u0000${o.resource ?? ""}\u0000${o.prompt ?? ""}`;
 }
 
 export function mergeOrigins(a: readonly Origin[], b: readonly Origin[]): Origin[] {

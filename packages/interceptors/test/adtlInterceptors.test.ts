@@ -18,19 +18,19 @@ describe("discovery", () => {
       ["adtl.label", "mutation"],
       ["adtl.policy", "validation"],
     ]);
-    expect(defs[0]?.hooks).toEqual([{ events: ["tools/call", "resources/read"], phase: "response" }]);
+    expect(defs[0]?.hooks).toEqual([{ events: ["tools/call", "resources/read", "prompts/get"], phase: "response" }]);
     expect(defs[1]?.hooks).toEqual([{ events: ["tools/call"], phase: "request" }]);
     expect(defs.every((d) => d.failOpen === false)).toBe(true);
   });
 
   it("filters by event", () => {
     expect(make().list("resources/read").map((d) => d.name)).toEqual(["adtl.label"]);
-    expect(make().list("prompts/get")).toEqual([]);
+    expect(make().list("sampling/createMessage")).toEqual([]);
   });
 
   it("reports supported events and returns copies, not internal state", () => {
     const core = make();
-    expect(core.supportedEvents()).toEqual(["tools/call", "resources/read"]);
+    expect(core.supportedEvents()).toEqual(["tools/call", "resources/read", "prompts/get"]);
     core.list()[0]!.name = "tampered";
     expect(core.list()[0]?.name).toBe("adtl.label");
   });
@@ -82,6 +82,20 @@ describe("adtl.label", () => {
       confidentiality: "private",
       origins: [{ server: "vault", resource: "repo://secret.env" }],
     });
+  });
+
+  it("labels prompts/get results using the prompt name", () => {
+    const core = make();
+    const r = core.invoke({
+      name: "adtl.label",
+      event: "prompts/get",
+      phase: "response",
+      payload: { method: "prompts/get", params: { name: "triage" }, result: { messages: [] } },
+      config: { server: "github" },
+      context: { sessionId: "s1" },
+    }) as MutationResult;
+    expect((r.info as { label: { origins: unknown } }).label.origins).toEqual([{ server: "github", prompt: "triage" }]);
+    expect(core.sessions.get("s1").integrity).toBe("untrusted");
   });
 
   it("honors openWorldHint from the invoker's config", () => {

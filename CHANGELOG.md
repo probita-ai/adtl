@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### `@adtl/gateway`
+- Proxies resources (`resources/list`, `resources/templates/list`, `resources/read`) and prompts (`prompts/list`, `prompts/get`), so content from them is labeled and counts toward the session label. Prompts are renamed `<server>__<prompt>`, like tools. Resource URIs are passed through unchanged and routed to the upstream that lists them, or whose template matches. A URI more than one upstream could serve is refused, because ADTL couldn't tell which server to label it as.
+- Resources and prompts are offered only when at least one upstream offers them.
+- Audit log entries have `event` `resources/read` or `prompts/get` with `resource` or `prompt` in place of `tool`.
+
+### `@adtl/interceptors`
+- `adtl.label` also hooks `prompts/get`.
+
+### `@adtl/labels`
+- Label origins can name a `prompt`.
+- Server trust claims are read from resource `contents` and prompt `messages`, not only tool `content`.
+
 ## 0.2.0 — experimental
 
 ### `@adtl/gateway`

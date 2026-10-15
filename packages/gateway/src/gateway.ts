@@ -5,6 +5,11 @@
  * tools/list  → every upstream's tools, renamed <upstream>__<tool>
  * tools/call  → request interceptors (adtl.policy) → upstream → response
  *               interceptors (adtl.label) → agent
+ * prompts/*   → like tools: renamed <upstream>__<prompt>, results labeled
+ * resources/* → URIs pass through unchanged and are routed to the upstream
+ *               that lists them (or whose template matches). Results are
+ *               labeled. A URI more than one upstream could serve is refused,
+ *               since ADTL could not tell which server to label it as.
  *
  * When a call is stopped, the agent receives a normal tool result with
  * `isError: true` explaining why, so the model can tell the user.
@@ -20,10 +25,24 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { UriTemplate } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import {
   CallToolRequestSchema,
+  ErrorCode,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ListToolsRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
   type CallToolResult,
+  type GetPromptResult,
+  type Prompt,
+  type ReadResourceResult,
+  type Resource,
+  type ResourceTemplate,
+  type ServerCapabilities,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { InvocationContext } from "@adtl/interceptors";
@@ -41,6 +60,21 @@ interface Route {
   upstream: string;
   tool: string;
   annotations?: Tool["annotations"];
+}
+
+interface PromptRoute {
+  upstream: string;
+  prompt: string;
+}
+
+interface TemplateRoute {
+  upstream: string;
+  template: UriTemplate;
+}
+
+interface Page<T> {
+  items: T[];
+  nextCursor?: string | undefined;
 }
 
 export interface GatewayLogger {
@@ -110,6 +144,10 @@ export class AdtlGateway {
   private readonly log: GatewayLogger;
   private readonly approvals: ApprovalBroker | undefined;
   private routes = new Map<string, Route>();
+  private promptRoutes = new Map<string, PromptRoute>();
+  /** Resource URI → the upstreams that list it. */
+  private resourceRoutes = new Map<string, Set<string>>();
+  private templateRoutes: TemplateRoute[] = [];
 
   constructor(opts: AdtlGatewayOptions) {
     this.upstreams = opts.upstreams;
@@ -122,10 +160,15 @@ export class AdtlGateway {
 
   /** The downstream MCP server the agent connects to. */
   createServer(): Server {
+    // Offer resources and prompts only if some upstream does (the SDK refuses handlers for undeclared capabilities).
+    const offers = (c: "resources" | "prompts") => [...this.upstreams.values()].some((u) => u.getServerCapabilities()?.[c]);
+    const capabilities: ServerCapabilities = { tools: {} };
+    if (offers("resources")) capabilities.resources = {};
+    if (offers("prompts")) capabilities.prompts = {};
     const server = new Server(
       { name: "adtl-gateway", version: GATEWAY_VERSION },
       {
-        capabilities: { tools: {} },
+        capabilities,
         instructions:
           "Tools from several MCP servers, named <server>__<tool>. ADTL checks each call against trust labels; " +
           "if a call is stopped, the result explains why.",
@@ -141,30 +184,212 @@ export class AdtlGateway {
               extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress, message } });
       return this.callTool(req.params.name, req.params.arguments ?? {}, progress ? { progress } : {});
     });
+    if (capabilities.resources) {
+      server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: await this.listResources() }));
+      server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+        resourceTemplates: await this.listResourceTemplates(),
+      }));
+      server.setRequestHandler(ReadResourceRequestSchema, async (req) => this.readResource(req.params.uri));
+    }
+    if (capabilities.prompts) {
+      server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: await this.listPrompts() }));
+      server.setRequestHandler(GetPromptRequestSchema, async (req) => this.getPrompt(req.params.name, req.params.arguments));
+    }
     return server;
   }
 
-  async listTools(): Promise<Tool[]> {
-    const routes = new Map<string, Route>();
-    const tools: Tool[] = [];
+  /** Every upstream's items from one list method, following cursors. Upstreams that fail are skipped with a warning. */
+  private async listAll<T>(
+    method: string,
+    capability: "tools" | "resources" | "prompts",
+    page: (client: Client, cursor?: string) => Promise<Page<T>>,
+  ): Promise<{ upstream: string; item: T }[]> {
+    const out: { upstream: string; item: T }[] = [];
     for (const [upstream, client] of this.upstreams) {
+      if (capability !== "tools" && !client.getServerCapabilities()?.[capability]) continue;
       let cursor: string | undefined;
       try {
         do {
-          const page = await client.listTools(cursor ? { cursor } : {});
-          for (const t of page.tools) {
-            const name = `${upstream}${TOOL_SEPARATOR}${t.name}`;
-            routes.set(name, { upstream, tool: t.name, ...(t.annotations ? { annotations: t.annotations } : {}) });
-            tools.push({ ...t, name });
-          }
-          cursor = page.nextCursor;
+          const p = await page(client, cursor);
+          for (const item of p.items) out.push({ upstream, item });
+          cursor = p.nextCursor;
         } while (cursor);
       } catch (err) {
-        this.log.warn(`tools/list failed for ${upstream}: ${(err as Error).message}`);
+        this.log.warn(`${method} failed for ${upstream}: ${(err as Error).message}`);
       }
     }
+    return out;
+  }
+
+  async listTools(): Promise<Tool[]> {
+    const all = await this.listAll("tools/list", "tools", async (c, cursor) => {
+      const p = await c.listTools(cursor ? { cursor } : {});
+      return { items: p.tools, nextCursor: p.nextCursor };
+    });
+    const routes = new Map<string, Route>();
+    const tools = all.map(({ upstream, item: t }) => {
+      const name = `${upstream}${TOOL_SEPARATOR}${t.name}`;
+      routes.set(name, { upstream, tool: t.name, ...(t.annotations ? { annotations: t.annotations } : {}) });
+      return { ...t, name };
+    });
     this.routes = routes;
     return tools;
+  }
+
+  async listPrompts(): Promise<Prompt[]> {
+    const all = await this.listAll("prompts/list", "prompts", async (c, cursor) => {
+      const p = await c.listPrompts(cursor ? { cursor } : {});
+      return { items: p.prompts, nextCursor: p.nextCursor };
+    });
+    const routes = new Map<string, PromptRoute>();
+    const prompts = all.map(({ upstream, item: p }) => {
+      const name = `${upstream}${TOOL_SEPARATOR}${p.name}`;
+      routes.set(name, { upstream, prompt: p.name });
+      return { ...p, name };
+    });
+    this.promptRoutes = routes;
+    return prompts;
+  }
+
+  async listResources(): Promise<Resource[]> {
+    const all = await this.listAll("resources/list", "resources", async (c, cursor) => {
+      const p = await c.listResources(cursor ? { cursor } : {});
+      return { items: p.resources, nextCursor: p.nextCursor };
+    });
+    const routes = new Map<string, Set<string>>();
+    for (const { upstream, item } of all) {
+      const ups = routes.get(item.uri) ?? new Set<string>();
+      ups.add(upstream);
+      routes.set(item.uri, ups);
+    }
+    for (const [uri, ups] of routes) {
+      if (ups.size > 1) this.log.warn(`resource ${uri} is offered by ${[...ups].join(", ")}; reading it will be refused`);
+    }
+    this.resourceRoutes = routes;
+    return all.map((a) => a.item);
+  }
+
+  async listResourceTemplates(): Promise<ResourceTemplate[]> {
+    const all = await this.listAll("resources/templates/list", "resources", async (c, cursor) => {
+      const p = await c.listResourceTemplates(cursor ? { cursor } : {});
+      return { items: p.resourceTemplates, nextCursor: p.nextCursor };
+    });
+    const routes: TemplateRoute[] = [];
+    for (const { upstream, item } of all) {
+      try {
+        routes.push({ upstream, template: new UriTemplate(item.uriTemplate) });
+      } catch (err) {
+        this.log.warn(`ignoring resource template ${item.uriTemplate} from ${upstream}: ${(err as Error).message}`);
+      }
+    }
+    this.templateRoutes = routes;
+    return all.map((a) => a.item);
+  }
+
+  /** The one upstream that serves `uri`: an exact listing wins, then template matches. */
+  private async resourceUpstream(uri: string): Promise<string> {
+    if (!this.resourceRoutes.has(uri)) await this.listResources();
+    let candidates = [...(this.resourceRoutes.get(uri) ?? [])];
+    if (candidates.length === 0) {
+      if (this.templateRoutes.length === 0) await this.listResourceTemplates();
+      candidates = [...new Set(this.templateRoutes.filter((t) => t.template.match(uri) !== null).map((t) => t.upstream))];
+    }
+    if (candidates.length === 0) throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
+    if (candidates.length > 1) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Resource ${uri} could come from more than one server (${candidates.join(", ")}). ` +
+          `ADTL can't tell which server to label it as, so it was not read.`,
+      );
+    }
+    return candidates[0]!;
+  }
+
+  async readResource(uri: string): Promise<ReadResourceResult> {
+    const upstream = await this.resourceUpstream(uri);
+    const client = this.upstreams.get(upstream)!;
+    return this.forwardLabeled("resources/read", upstream, { resource: uri }, { uri }, (params) =>
+      client.readResource(params as { uri: string }),
+    );
+  }
+
+  async getPrompt(name: string, args?: Record<string, string>): Promise<GetPromptResult> {
+    let route = this.promptRoutes.get(name);
+    if (!route) {
+      await this.listPrompts();
+      route = this.promptRoutes.get(name);
+    }
+    if (!route) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+    const client = this.upstreams.get(route.upstream)!;
+    return this.forwardLabeled(
+      "prompts/get",
+      route.upstream,
+      { prompt: route.prompt },
+      { name: route.prompt, ...(args ? { arguments: args } : {}) },
+      (params) => client.getPrompt(params as { name: string; arguments?: Record<string, string> }),
+    );
+  }
+
+  /**
+   * Forward a resources/read or prompts/get request through the interceptor
+   * chain: request interceptors → upstream → response interceptors (adtl.label).
+   * These requests have no tool result to carry an error, so a stopped request
+   * becomes a JSON-RPC error.
+   */
+  private async forwardLabeled<R extends object>(
+    event: "resources/read" | "prompts/get",
+    upstream: string,
+    target: { resource: string } | { prompt: string },
+    params: Record<string, unknown>,
+    send: (params: Record<string, unknown>) => Promise<R>,
+  ): Promise<R> {
+    const started = performance.now();
+    const context: InvocationContext = {
+      sessionId: this.sessionId,
+      timestamp: new Date().toISOString(),
+      principal: { type: "anonymous" },
+    };
+    const config = { server: upstream };
+    const audit = this.invoker.modeOverride === "audit" ? { mode: "audit" as const } : {};
+    const finish = (entry: Pick<AuditEntry, "outcome"> & Partial<AuditEntry>) =>
+      this.audit?.write({
+        ts: context.timestamp!,
+        sessionId: this.sessionId,
+        event,
+        server: upstream,
+        ...target,
+        ...entry,
+        durationMs: Math.round(performance.now() - started),
+      });
+    const what = "resource" in target ? `resource ${target.resource}` : `prompt ${upstream}${TOOL_SEPARATOR}${target.prompt}`;
+
+    const req = await this.invoker.runRequest({ event, payload: { method: event, params }, config, context });
+    if (req.blocked) {
+      finish({ outcome: "blocked", decision: req.blocked.decision, reason: req.blocked.reason, warnings: req.warnings });
+      this.log.info(`${req.blocked.decision} ${what}: ${req.blocked.reason}`);
+      throw new McpError(ErrorCode.InvalidRequest, `ADTL blocked this request: ${req.blocked.reason}`);
+    }
+    const forwarded = (req.payload as { params: Record<string, unknown> }).params;
+
+    let result: R;
+    try {
+      result = await send(forwarded);
+    } catch (err) {
+      finish({ outcome: "upstream_error", reason: (err as Error).message, ...audit, warnings: req.warnings });
+      throw err;
+    }
+
+    const res = await this.invoker.runResponse({ event, payload: { method: event, params: forwarded, result }, config, context });
+    const warnings = [...req.warnings, ...res.warnings];
+    if (res.blocked) {
+      // Fail closed: unlabeled content must not reach the agent.
+      finish({ outcome: "blocked", decision: res.blocked.decision, reason: res.blocked.reason, warnings });
+      this.log.warn(`${what} withheld: ${res.blocked.reason}`);
+      throw new McpError(ErrorCode.InternalError, `ADTL could not label this content, so it was withheld: ${res.blocked.reason}`);
+    }
+    const label = infoOf(res, "adtl.label");
+    finish({ outcome: "forwarded", ...audit, label: label.label, sessionLabel: label.sessionLabel, warnings });
+    return (res.payload as { result: R }).result;
   }
 
   async callTool(name: string, args: Record<string, unknown>, opts: CallOptions = {}): Promise<CallToolResult> {

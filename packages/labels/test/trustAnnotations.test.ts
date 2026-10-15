@@ -32,6 +32,13 @@ describe("readClaims", () => {
     expect(readClaims(result)).toEqual({ untrusted: true, sensitive: true });
   });
 
+  it("reads block annotations in resource contents and prompt messages", () => {
+    expect(readClaims({ contents: [{ uri: "a", text: "x", _meta: ann({ untrusted: true }) }] })).toEqual({ untrusted: true });
+    expect(
+      readClaims({ messages: [{ role: "user", content: { type: "text", text: "x", _meta: ann({ sensitive: true }) } }] }),
+    ).toEqual({ sensitive: true });
+  });
+
   it("ignores unknown evidenceRef types", () => {
     const result = { _meta: ann({ untrusted: false, evidenceRef: { type: "x.unknown.v9", digest: "sha256:00" } }) };
     expect(readClaims(result)).toEqual({ untrusted: false });

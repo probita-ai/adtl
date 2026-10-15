@@ -134,7 +134,8 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 
 ## Limits of this version
 
-- Only tools are proxied. Resources and prompts are not passed through yet.
+- Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
+- Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
 - Approvals come from one push channel (ntfy). Other channels, approvals inside the MCP client, and approver roles are planned.
 - Labels last for one gateway process, which is one agent session. They are not carried into files, memory or other agents yet; that's planned for v0.4.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.

@@ -6,7 +6,7 @@ An MCP **interceptor server** (SEP-2624 draft) with two interceptors:
 
 | Interceptor | Type | Hook | What it does |
 |---|---|---|---|
-| `adtl.label` | mutation | `tools/call`, `resources/read` · response | Labels the result (`_meta["io.modelcontextprotocol/trust-annotations"]`) and records the label in the session |
+| `adtl.label` | mutation | `tools/call`, `resources/read`, `prompts/get` · response | Labels the result (`_meta["io.modelcontextprotocol/trust-annotations"]`) and records the label in the session |
 | `adtl.policy` | validation | `tools/call` · request | Checks the call against the session's labels and the policy: allow, ask or block |
 
 Most people should use [`@adtl/gateway`](https://www.npmjs.com/package/@adtl/gateway), which starts this server and calls it for you. Use this package directly if you are building your own interceptor invoker.

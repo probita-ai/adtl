@@ -1,5 +1,5 @@
 /**
- * Decide the label of a tool or resource result.
+ * Decide the label of a tool, resource or prompt result.
  *
  * Order of authority:
  * 1. The gateway owner's config (tool rule, then server defaults).
@@ -24,6 +24,8 @@ export interface LabelInput {
   tool?: string;
   /** Resource URI, for resources/read results. */
   resource?: string;
+  /** Prompt name, for prompts/get results. */
+  prompt?: string;
   /** The raw result returned by the upstream server. */
   result: unknown;
   /** MCP tool annotations from tools/list, if known. */
@@ -60,6 +62,7 @@ export function labelResult(input: LabelInput, config: AdtlConfig): Label {
   const origin: Label["origins"][number] = { server: input.server };
   if (input.tool !== undefined) origin.tool = input.tool;
   if (input.resource !== undefined) origin.resource = input.resource;
+  if (input.prompt !== undefined) origin.prompt = input.prompt;
 
   return { integrity, confidentiality, origins: [origin] };
 }

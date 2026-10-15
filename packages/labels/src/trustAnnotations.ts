@@ -81,17 +81,27 @@ function unionClaims(a: TrustClaims, b: TrustClaims): TrustClaims {
   return out;
 }
 
+/** The blocks inside a result that may carry their own annotation. */
+function blocksOf(result: Record<string, unknown>): unknown[] {
+  const blocks: unknown[] = [];
+  // tools/call: content[]; resources/read: contents[]; prompts/get: messages[].content
+  if (Array.isArray(result.content)) blocks.push(...result.content);
+  if (Array.isArray(result.contents)) blocks.push(...result.contents);
+  if (Array.isArray(result.messages)) {
+    for (const m of result.messages) if (isRecord(m)) blocks.push(m, m.content);
+  }
+  return blocks;
+}
+
 /**
  * Read the trust claims a result makes, combining the result-level annotation
- * with any content-block annotations (blocks can only add restrictions).
+ * with any block-level annotations (blocks can only add restrictions).
  */
 export function readClaims(result: unknown): TrustClaims {
   if (!isRecord(result)) return {};
   let claims = readAnnotations(result._meta);
-  if (Array.isArray(result.content)) {
-    for (const block of result.content) {
-      if (isRecord(block)) claims = unionClaims(claims, readAnnotations(block._meta));
-    }
+  for (const block of blocksOf(result)) {
+    if (isRecord(block)) claims = unionClaims(claims, readAnnotations(block._meta));
   }
   return claims;
 }
