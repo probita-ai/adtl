@@ -6,3 +6,4 @@ export * from "./ntfy.js";
 export * from "./email.js";
 export * from "./gateway.js";
 export * from "./startup.js";
+export * from "./init/index.js";

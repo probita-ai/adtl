@@ -88,7 +88,7 @@ function stdioTransport(u: StdioUpstream, baseDir: string): StdioClientTransport
   });
 }
 
-async function connect(id: string, u: Upstream, baseDir: string): Promise<Client> {
+export async function connectUpstream(id: string, u: Upstream, baseDir: string): Promise<Client> {
   const client = new Client({ name: `adtl-gateway→${id}`, version: GATEWAY_VERSION });
   const transport = isHttpUpstream(u)
     ? new StreamableHTTPClientTransport(new URL(u.url), { requestInit: { headers: u.headers } })
@@ -137,7 +137,7 @@ export async function startGateway(
     const icfg: StdioUpstream = loaded.gateway.interceptors
       ? expandUpstream("interceptors", loaded.gateway.interceptors, env)
       : { command: process.execPath, args: [bundledInterceptorsCli(), "--config", loaded.path], env: {} };
-    const interceptors = await connect("interceptors", icfg, baseDir);
+    const interceptors = await connectUpstream("interceptors", icfg, baseDir);
     clients.push(interceptors);
     if (!interceptors.getServerCapabilities()?.extensions?.[INTERCEPTORS_EXTENSION]) {
       throw new GatewayConfigError(`The interceptor server does not declare the ${INTERCEPTORS_EXTENSION} extension`);
@@ -158,7 +158,7 @@ export async function startGateway(
     const upstreams = new Map<string, Client>();
     const ids = Object.keys(loaded.gateway.upstreams);
     const settled = await Promise.allSettled(
-      ids.map((id) => connect(id, expandUpstream(id, loaded.gateway.upstreams[id]!, env), baseDir)),
+      ids.map((id) => connectUpstream(id, expandUpstream(id, loaded.gateway.upstreams[id]!, env), baseDir)),
     );
     settled.forEach((s, i) => {
       const id = ids[i]!;

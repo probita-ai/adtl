@@ -7,6 +7,8 @@
 - Resources and prompts are offered only when at least one upstream offers them.
 - Audit log entries have `event` `resources/read` or `prompts/get` with `resource` or `prompt` in place of `tool`.
 
+- `adtl-gateway init -c adtl.yaml [--write]` drafts a labeling rule for every tool of every upstream that the config doesn't cover yet, plus server defaults for resources and prompts. Presets for the GitHub, filesystem and fetch servers; other servers get rules from MCP tool hints (egress only; results stay untrusted and private). Existing entries are never changed; `--write` keeps the original as `.bak`.
+
 ### `@adtl/interceptors`
 - `adtl.label` also hooks `prompts/get`.
 

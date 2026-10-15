@@ -58,7 +58,25 @@ One file holds both the labels and the gateway settings.
 | `confidentiality` | `public`, `private`, `secret` | Who may see the tool's *result*? |
 | `egress` | `none`, `internal`, `external`, `public` | Where *calling* the tool can send data. |
 
-Tools without a rule use the defaults (`untrusted`, `private`, egress `unknown`). That's safe but strict, so describe the tools you use.
+Tools without a rule use the defaults (`untrusted`, `private`, egress `unknown`). That's safe but strict, so describe the tools you use. Resources and prompts use the server's `defaults`.
+
+#### Drafting rules with `init`
+
+List your servers under `gateway.upstreams`, then let `init` draft a rule for every tool:
+
+```sh
+adtl-gateway init -c adtl.yaml           # print the updated config, change nothing
+adtl-gateway init -c adtl.yaml --write   # update the file (original kept as adtl.yaml.bak)
+```
+
+`init` connects to each upstream and lists its tools.
+
+- **Presets** cover the GitHub (`github-mcp-server`), filesystem and fetch servers. A preset says what the server's reads and writes mean; the server's `readOnlyHint` decides which tools are reads, so new tools are covered too.
+- **Other servers** get rules from their MCP tool hints. Hints only set egress, because they are the server's own claims: every result stays `untrusted` and `private` until you change it. These lines are marked `review`.
+- Entries already in the file are never changed, so you can re-run `init` after a server adds tools. Tools the server no longer offers are reported, not removed.
+- Edits keep your comments, but the YAML may be reformatted slightly (e.g. `[a]` becomes `[ a ]`).
+
+Always review the result: a preset is a starting point, not a judgment about your data.
 
 Labels only get stricter as a session goes on. A session that has read anything untrusted stays untrusted until the session ends.
 

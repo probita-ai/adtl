@@ -4,6 +4,7 @@
  * servers through ADTL's interceptors.
  *
  *   adtl-gateway --config adtl.yaml [--audit]
+ *   adtl-gateway init --config adtl.yaml [--write]
  *
  * Point your MCP client (e.g. Claude Code's .mcp.json) at this command.
  * Logs go to stderr; stdout carries MCP JSON-RPC only.
@@ -11,9 +12,11 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { EnvExpansionError } from "./config.js";
 import { GATEWAY_VERSION } from "./gateway.js";
+import { runInit, type InitResult } from "./init/run.js";
 import { GatewayConfigError, loadGatewayConfig, startGateway } from "./startup.js";
 
 const USAGE = `Usage: adtl-gateway --config <adtl.yaml> [--audit]
+       adtl-gateway init --config <adtl.yaml> [--write]
 
 Runs an MCP server over stdio that forwards tool calls to the upstream
 servers in the config, checking and labeling each call with ADTL.
@@ -23,9 +26,18 @@ Options:
       --audit          Log what would be stopped, but stop nothing
                        (same as gateway.mode: audit).
   -v, --version        Print the version and exit.
+
+init:
+  Connects to every upstream, lists its tools, and drafts a labeling rule
+  for each tool the config doesn't cover yet (presets for GitHub,
+  filesystem and fetch; MCP tool hints otherwise). Existing entries are
+  never changed. Prints the updated config; review it before using it.
+      --write          Update the config file in place (original kept as .bak).
   -h, --help           Show this help.`;
 
 interface Args {
+  init?: boolean;
+  write?: boolean;
   config?: string;
   audit?: boolean;
   help?: boolean;
@@ -36,11 +48,13 @@ function parseArgs(argv: string[]): Args {
   const out: Args = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "-h" || a === "--help") out.help = true;
+    if (i === 0 && a === "init") out.init = true;
+    else if (a === "-h" || a === "--help") out.help = true;
     else if (a === "-v" || a === "--version") out.version = true;
     else if (a === "-c" || a === "--config") out.config = argv[++i];
     else if (a?.startsWith("--config=")) out.config = a.slice("--config=".length);
     else if (a === "--audit") out.audit = true;
+    else if (a === "--write" && out.init) out.write = true;
     else throw new GatewayConfigError(`Unknown argument: ${a}\n\n${USAGE}`);
   }
   return out;
@@ -52,6 +66,7 @@ async function main(): Promise<void> {
   if (args.help) return void console.log(USAGE);
   if (args.version) return void console.log(GATEWAY_VERSION);
   if (!args.config) throw new GatewayConfigError(`Missing --config\n\n${USAGE}`);
+  if (args.init) return init(args.config, args.write === true);
 
   const loaded = await loadGatewayConfig(args.config);
   if (args.audit) loaded.gateway.mode = "audit";
@@ -75,6 +90,31 @@ async function main(): Promise<void> {
 
   await server.connect(new StdioServerTransport());
   console.error(`[adtl-gateway] ${GATEWAY_VERSION} ready (session ${started.gateway.sessionId})`);
+}
+
+function summarize(r: InitResult, path: string, write: boolean): string {
+  const lines = r.reports.map((s) => {
+    const parts = [`${s.added.length} tools added`];
+    if (s.kept.length) parts.push(`${s.kept.length} kept`);
+    if (s.addedDefaults) parts.push("defaults added");
+    if (s.stale.length) parts.push(`no longer offered: ${s.stale.join(", ")}`);
+    return `  ${s.id} (${s.preset ? `preset ${s.preset}` : "from tool hints, review"}): ${parts.join("; ")}`;
+  });
+  for (const f of r.failed) lines.push(`  ${f.id}: could not connect, skipped (${f.error})`);
+  const changed = r.reports.some((s) => s.added.length || s.addedDefaults);
+  const tail = !changed
+    ? "Nothing to add."
+    : write
+      ? `Updated ${path} (original saved as ${path}.bak). Review every line marked "review".`
+      : "Nothing written. Review the config above, then re-run with --write.";
+  return `${lines.join("\n")}\n${tail}`;
+}
+
+async function init(path: string, write: boolean): Promise<void> {
+  const result = await runInit({ path, write });
+  if (!write) process.stdout.write(result.text);
+  console.error(`[adtl-gateway] init\n${summarize(result, path, write)}`);
+  if (result.failed.length && !result.reports.length) process.exitCode = 1;
 }
 
 main().catch((err: unknown) => {
