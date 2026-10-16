@@ -1,6 +1,6 @@
 {
   "name": "@adtl/labels",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Experimental: core trust-label model for AI agents \u2014 MCP trust-annotations codec, label propagation and policy evaluation",
   "keywords": [
     "mcp",

@@ -53,7 +53,7 @@ export const POLICY_INTERCEPTOR = "adtl.policy";
 /** Key in `ValidationResult.info` carrying ADTL's decision (SEP-2624 has no "ask" outcome yet). */
 export const DECISION_INFO_KEY = "adtl/decision";
 
-export const VERSION = "0.3.2";
+export const VERSION = "0.4.0";
 
 /** JSON-RPC error codes used for invocation errors. */
 export const ErrorCodes = {
