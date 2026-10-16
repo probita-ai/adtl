@@ -46,6 +46,7 @@ jobs:
       - run: npm run test:pack
       - name: Publish to npm (dependencies first; versions already published are skipped)
         run: |
+          set -o pipefail
           version="${GITHUB_REF_NAME#v}"
           dist_tag=latest
           case "$version" in *-*) dist_tag=next ;; esac
@@ -60,7 +61,11 @@ jobs:
                 echo "::error::npm would change $name's package.json while publishing; run 'npm pkg fix' in packages/$p"
                 exit 1
               fi
-              (cd "packages/$p" && npm publish --tag "$dist_tag")
+              # npm view can lag behind a publish made moments ago (e.g. by hand); treat "already published" as done.
+              if ! (cd "packages/$p" && npm publish --tag "$dist_tag" 2>&1) | tee publish.log; then
+                grep -q "cannot publish over the previously published" publish.log || exit 1
+                echo "$name@$version was already published, skipping"
+              fi
             fi
           done
 
