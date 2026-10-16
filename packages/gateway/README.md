@@ -2,6 +2,8 @@
 
 > **Experimental.** ADTL is a personal open-source project built on draft MCP proposals ([trust-annotations](https://github.com/modelcontextprotocol/experimental-ext-tool-annotations), [SEP-2624 interceptors](https://github.com/modelcontextprotocol/experimental-ext-interceptors)) that are still changing. It is not a security guarantee: don't rely on it to protect production systems yet. Feedback is very welcome.
 
+![How ADTL fits between your agent and its tools](https://raw.githubusercontent.com/probita-ai/adtl/main/docs/adtl-sketch-v3.png)
+
 An MCP gateway for AI agents. It sits between your agent (Claude Code, Cursor, any MCP client) and your MCP servers, and:
 
 - **labels every tool result**: where it came from, whether it can be trusted, how sensitive it is (MCP's draft `trust-annotations` format)

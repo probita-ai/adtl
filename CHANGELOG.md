@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### `@adtl/gateway`
+- The README shows the architecture sketch on npm too.
+
 ## 0.4.0 — experimental
 
 Requires Node.js 22.13 or later (for the built-in `node:sqlite`).
