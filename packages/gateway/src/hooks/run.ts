@@ -9,6 +9,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { FileSessionStore, defaultSessionsDir } from "@adtl/labels";
+import { Ledger, defaultLedgerPath } from "@adtl/ledger";
 import { parseConfigText } from "@adtl/interceptors";
 import { parse as parseYaml } from "yaml";
 import { JsonlAuditLog } from "../audit.js";
@@ -34,14 +35,18 @@ export async function runHook(opts: RunHookOptions): Promise<HookOutcome> {
     const text = await readFile(path, "utf8");
     const config = parseConfigText(text, path);
     const gw = ((parseYaml(text) ?? {}) as { gateway?: { audit?: unknown; mode?: unknown } }).gateway ?? {};
-    const sessionsDir = defaultSessionsDir(opts.env ?? process.env);
+    const env = opts.env ?? process.env;
+    const sessionsDir = defaultSessionsDir(env);
+    const ledgerPath = config.ledger.path ? resolve(dirname(path), config.ledger.path) : defaultLedgerPath(env);
+    const ledger = config.ledger.enabled ? new Ledger(ledgerPath, { retentionDays: config.ledger.retentionDays }) : undefined;
     return handleHook(input, {
       config,
       sessions: new FileSessionStore(sessionsDir),
+      ...(ledger ? { ledger } : {}),
       ...(opts.gatewayServer ? { gatewayServer: opts.gatewayServer } : {}),
       mode: gw.mode === "audit" ? "audit" : "active",
       ...(typeof gw.audit === "string" ? { audit: new JsonlAuditLog(resolve(dirname(path), gw.audit)) } : {}),
-      protect: { configPath: path, sessionsDir },
+      protect: { configPath: path, sessionsDir, ledgerPath },
     });
   } catch (err) {
     return failure(input.hook_event_name, (err as Error).message);

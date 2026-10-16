@@ -152,12 +152,14 @@ export async function startGateway(
     // 1. Interceptor server (out of process, per the Interceptors WG).
     const shared = sharedSession(env);
     const custom = loaded.gateway.interceptors && expandUpstream("interceptors", loaded.gateway.interceptors, env);
+    // The interceptor process starts with a minimal environment; pass on where the ledger lives.
+    const ledgerEnv: Record<string, string> = env.ADTL_LEDGER ? { ADTL_LEDGER: env.ADTL_LEDGER } : {};
     const icfg: StdioUpstream = custom
-      ? { ...custom, env: { ...custom.env, ...(shared ? { ADTL_SESSIONS_DIR: shared.dir } : {}) } }
+      ? { ...custom, env: { ...ledgerEnv, ...custom.env, ...(shared ? { ADTL_SESSIONS_DIR: shared.dir } : {}) } }
       : {
           command: process.execPath,
           args: [bundledInterceptorsCli(), "--config", loaded.path, ...(shared ? ["--sessions-dir", shared.dir] : [])],
-          env: {},
+          env: ledgerEnv,
         };
     const interceptors = await connectUpstream("interceptors", icfg, baseDir);
     clients.push(interceptors);

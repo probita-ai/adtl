@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const read = (p) => readFileSync(new URL(p, `file://${root}/`), "utf8");
-const PACKAGES = ["labels", "interceptors", "gateway"];
+const PACKAGES = ["labels", "ledger", "interceptors", "gateway"];
 const CONSTANTS = {
   "packages/interceptors/src/adtlInterceptors.ts": /export const VERSION = "([^"]+)"/,
   "packages/gateway/src/gateway.ts": /export const GATEWAY_VERSION = "([^"]+)"/,

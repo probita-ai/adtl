@@ -8,15 +8,16 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "scripts": {
-    "build": "tsc -b packages/labels packages/interceptors packages/gateway",
+    "build": "tsc -b packages/labels packages/ledger packages/interceptors packages/gateway",
     "pretest": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.test.json",
     "demo": "npm run build && node examples/github-exfil-demo/demo.mjs",
-    "test:pack": "npm run build && node scripts/pack-test.mjs"
+    "test:pack": "npm run build && node scripts/pack-test.mjs",
+    "demo:ledger": "npm run build && node examples/delayed-injection-demo/demo.mjs"
   },
   "repository": {
     "type": "git",

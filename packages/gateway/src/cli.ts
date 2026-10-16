@@ -6,6 +6,7 @@
  *   adtl-gateway --config adtl.yaml [--audit]
  *   adtl-gateway init --config adtl.yaml [--from .mcp.json] [--write]
  *   adtl-gateway hook --config adtl.yaml [--gateway-server adtl]
+ *   adtl-gateway ledger stats|verify|declassify <file>
  *
  * Point your MCP client (e.g. Claude Code's .mcp.json) at this command.
  * Logs go to stderr; stdout carries MCP JSON-RPC only.
@@ -14,12 +15,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { EnvExpansionError } from "./config.js";
 import { GATEWAY_VERSION } from "./gateway.js";
 import { runHook } from "./hooks/run.js";
+import { runLedgerCommand } from "./ledgerCli.js";
 import { runInit, type InitResult } from "./init/run.js";
 import { GatewayConfigError, loadGatewayConfig, startGateway } from "./startup.js";
 
 const USAGE = `Usage: adtl-gateway --config <adtl.yaml> [--audit]
        adtl-gateway init --config <adtl.yaml> [--from <.mcp.json>] [--write]
        adtl-gateway hook --config <adtl.yaml> [--gateway-server <name>]
+       adtl-gateway ledger stats|verify|declassify <file>  (see: adtl-gateway ledger --help)
 
 Runs an MCP server over stdio that forwards tool calls to the upstream
 servers in the config, checking and labeling each call with ADTL.
@@ -86,6 +89,12 @@ function parseArgs(argv: string[]): Args {
 }
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "ledger") {
+    const r = await runLedgerCommand(process.argv.slice(3));
+    console.log(r.stdout);
+    process.exitCode = r.exitCode;
+    return;
+  }
   const args = parseArgs(process.argv.slice(2));
   // --help and --version print to stdout and exit; MCP is never served in these modes.
   if (args.help) return void console.log(USAGE);
@@ -172,7 +181,7 @@ async function init(path: string, write: boolean, from?: string): Promise<void> 
 }
 
 main().catch((err: unknown) => {
-  const known = err instanceof GatewayConfigError || err instanceof EnvExpansionError;
+  const known = err instanceof GatewayConfigError || err instanceof EnvExpansionError || process.argv[2] === "ledger";
   console.error(known ? `[adtl-gateway] ${(err as Error).message}` : err);
   // For Claude Code hooks only exit code 2 stops the call; any other code lets it run.
   process.exit(process.argv[2] === "hook" ? 2 : 1);

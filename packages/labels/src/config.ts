@@ -86,6 +86,17 @@ export const PolicySchema = z
   .strict();
 export type Policy = z.infer<typeof PolicySchema>;
 
+export const LedgerConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    /** SQLite file. Default: ADTL_LEDGER, or ~/.adtl/ledger.db. Relative paths resolve against the config file. */
+    path: z.string().min(1).optional(),
+    /** Entries older than this are forgotten. */
+    retentionDays: z.number().int().positive().default(90),
+  })
+  .strict();
+export type LedgerConfig = z.infer<typeof LedgerConfigSchema>;
+
 export const AdtlConfigSchema = z
   .object({
     /** Label for results with no matching rule. Restrictive by default. */
@@ -95,6 +106,8 @@ export const AdtlConfigSchema = z
       .default({ integrity: "untrusted", confidentiality: "private" }),
     servers: z.record(ServerConfigSchema).default({}),
     policy: PolicySchema.default({}),
+    /** Label ledger: remembers content written by tainted sessions and re-labels it when it is read back. */
+    ledger: LedgerConfigSchema.default({}),
     /** Settings for adtl-gateway (upstream servers, audit log). Validated by the gateway, ignored here. */
     gateway: z.unknown().optional(),
   })

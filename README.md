@@ -54,6 +54,7 @@ See [`@adtl/gateway`](packages/gateway) for the config format, and [examples/cla
 |---|---|
 | [`@adtl/gateway`](packages/gateway) | MCP gateway: proxies your MCP servers, runs the interceptors, writes the audit log |
 | [`@adtl/interceptors`](packages/interceptors) | SEP-2624 interceptor server: `adtl.label` (mutation) and `adtl.policy` (validation) |
+| [`@adtl/ledger`](packages/ledger) | Label ledger: re-labels content written by tainted sessions when it is read back |
 | [`@adtl/labels`](packages/labels) | Core label model, trust-annotations codec, labeling rules, policy evaluation |
 
 ## Status
@@ -70,10 +71,12 @@ v0.3.1 adds Claude Code hooks: `adtl-gateway hook` labels and checks Claude Code
 
 v0.3.2 adds `adtl-gateway init --from .mcp.json`: import the MCP servers you already use in Claude Code, and point Claude Code at the gateway.
 
+v0.4 adds the label ledger: content written by a session that had read untrusted or private data keeps that label when it is read back, in a later session or another tool. It stops delayed injections, written on Monday and triggered on Tuesday ([demo](examples/delayed-injection-demo)).
+
 Planned next:
 
 - **Rest of v0.3:** a demo against the real GitHub MCP server
-- **v0.4:** a label ledger, so labels survive when data moves into files and memory
+- **v0.4.x:** signed session receipts: a tamper-evident record of every call in a session
 - **v0.5:** labels carried across sub-agents and A2A, plus interop with FIDES
 - **Later:** authorization (RBAC / ABAC): who may call a tool and who may approve, using existing engines such as Cedar and OpenFGA
 
@@ -106,9 +109,9 @@ npm run typecheck
 npm run demo
 ```
 
-Requires Node.js 20 or later.
+Requires Node.js 22.13 or later.
 
-Releases are published by [GitHub Actions](.github/workflows/release.yml) when a version tag is pushed: bump all three packages and their `VERSION` constants together, add a `CHANGELOG.md` section, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow checks that the tag and versions agree, runs the tests, publishes to npm with provenance, and creates the GitHub release.
+Releases are published by [GitHub Actions](.github/workflows/release.yml) when a version tag is pushed: bump all four packages and their `VERSION` constants together, add a `CHANGELOG.md` section, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow checks that the tag and versions agree, runs the tests, publishes to npm with provenance, and creates the GitHub release.
 
 ## License
 

@@ -1,0 +1,53 @@
+{
+  "name": "@adtl/ledger",
+  "version": "0.3.2",
+  "description": "Experimental: label ledger for AI agents \u2014 remembers content written by tainted sessions and re-labels it when it is read back",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "ai-security",
+    "prompt-injection",
+    "information-flow-control",
+    "trust-labels"
+  ],
+  "author": "Murthy G",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/probita-ai/adtl.git",
+    "directory": "packages/ledger"
+  },
+  "homepage": "https://github.com/probita-ai/adtl/tree/main/packages/ledger#readme",
+  "bugs": {
+    "url": "https://github.com/probita-ai/adtl/issues"
+  },
+  "dependencies": {
+    "@adtl/labels": "0.3.2"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

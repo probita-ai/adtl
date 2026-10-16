@@ -40,6 +40,12 @@ policy:
       then: block
       reason: Private data must not reach a public tool
 
+# Label ledger (on by default): content written by a session that had read
+# untrusted or private data keeps that label when it is read back later.
+# ledger:
+#   path: ./ledger.db        # default: ~/.adtl/ledger.db (or ADTL_LEDGER)
+#   retentionDays: 90
+
 gateway:
   # Optional: ask on your phone instead of blocking "ask" decisions.
   # Install the ntfy app, subscribe to a long random topic, and export ADTL_NTFY_TOPIC.

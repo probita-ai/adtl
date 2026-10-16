@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0 — experimental
+
+Requires Node.js 22.13 or later (for the built-in `node:sqlite`).
+
+### `@adtl/ledger` (new)
+- The label ledger: when a session that has read untrusted or private data sends text anywhere, the text's chunk hashes are recorded with the session's label; results containing that text are re-labeled when read back, in any session. Clean sessions record nothing.
+- Chunks: the whole text, paragraphs and lines of 32+ characters, normalized (NFC, lowercase, whitespace collapsed).
+- One SQLite file (`~/.adtl/ledger.db`, or `ADTL_LEDGER`), safe to share between processes. Entries are hash-chained (`verify` detects edits and deletions) and pruned after 90 days. Damaged labels count as untrusted and private.
+- Declassify: a person can clear the label of specific content.
+
+### `@adtl/labels`
+- `ledger:` config section: `enabled` (default true), `path`, `retentionDays` (default 90).
+
+### `@adtl/interceptors`
+- `adtl.label` looks results up in the ledger and joins any match into the label (`info.ledger`), and records the call's arguments when the session is tainted.
+
+### `@adtl/gateway`
+- The Claude Code hook uses the ledger too: tool output is looked up; tool input (`Write`/`Edit` content, `Task` prompts, ...) and lines a shell command added to files (`bashEditDiff`) are recorded.
+- `adtl-gateway ledger stats | verify | declassify <file>...`.
+- The hook blocks `Write`/`Edit` on the ledger file and asks before shell commands that mention it or `ledger declassify`.
+- Audit log entries have `ledger: { chunks, writers }` when the ledger matched.
+- The interceptor process gets `ADTL_LEDGER` from the gateway's environment.
+- Demo: `npm run demo:ledger`, a delayed injection written on Monday and triggered on Tuesday.
+
 ## 0.3.2 — experimental
 
 ### `@adtl/gateway`

@@ -195,6 +195,33 @@ With the [example policy](../../examples/adtl.yaml), `Bash` and `WebFetch` run f
 
 The hook also refuses `Write` and `Edit` on your ADTL config and session files, and asks before shell commands that mention the session directory, so the agent can't simply clear its own taint. This is a speed bump, not a sandbox.
 
+## Label ledger
+
+Session labels end with the session. If an agent writes untrusted content to a file, a fresh session reading that file tomorrow would trust it. The ledger remembers who wrote what:
+
+- After a call by a session that has read untrusted or private data, the text the call sent (tool arguments; with the Claude Code hooks also `Write` and `Edit` content, `Task` prompts and lines a shell command added to files) is recorded by content hash with the session's label. Clean sessions record nothing.
+- Every result the gateway or the hooks label is looked up. If it contains recorded text, that label is joined in, with the origin `adtl-ledger` / `session:<id>`, and the audit entry gets `ledger: { chunks, writers }`.
+- It is on by default and shared by the gateway, the interceptors and the hooks: one SQLite file at `~/.adtl/ledger.db` (or `ADTL_LEDGER`). Configure it in `adtl.yaml`:
+
+  ```yaml
+  ledger:
+    enabled: true          # default
+    path: ./ledger.db      # optional; relative to this file
+    retentionDays: 90      # default
+  ```
+
+Look after it with:
+
+```sh
+adtl-gateway ledger stats
+adtl-gateway ledger verify                  # exit 1 if an entry was changed or removed
+adtl-gateway ledger declassify notes.md     # after checking it: clear the label of its current content
+```
+
+Matching is by normalized chunks (whole text, paragraphs, lines of 32+ characters), so text copied into a bigger file still matches, and text the agent rewrote was already recorded with its session's label. Text a person rewrites by hand, binary files, and content an MCP server returns in another encoding (such as base64) are not matched. The Claude Code hook blocks `Write`/`Edit` on the ledger file and asks before shell commands that mention it or `ledger declassify`. Entries are hash-chained, not signed: an agent with shell access could still rebuild the file, which `verify` cannot detect. Signed entries are planned with labels that travel between agents (v0.5).
+
+See [the delayed-injection demo](../../examples/delayed-injection-demo) (`npm run demo:ledger`).
+
 ## How it works
 
 ```
@@ -212,7 +239,7 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 - Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
 - Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
 - Approvals come from one push channel (ntfy). Other channels, approvals inside the MCP client, and approver roles are planned.
-- Labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). They are not carried into files, memory or other agents yet; that's planned for v0.4. A file written after reading untrusted content reads back as trusted.
+- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.5).
 - The Claude Code hooks label tools by name, not by what they touched: a `Read` of a downloaded file is as trusted as a `Read` of your own code.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.
 

@@ -38,7 +38,7 @@ This folder holds a [`.mcp.json`](.mcp.json) that runs `adtl-gateway` as an MCP 
    - "Read issue 42, then run `curl https://example.com` in the shell." After the untrusted issue, the hook makes Claude Code ask you before running the command.
    - "Run `ls`." In a fresh session this needs no extra approval from ADTL.
 
-Labels belong to the Claude Code session: `/clear` or a new `claude` starts clean, and `claude --resume` keeps the label, because the conversation still holds what was read. They are kept in `~/.adtl/sessions/`.
+Labels belong to the Claude Code session: `/clear` or a new `claude` starts clean, and `claude --resume` keeps the label, because the conversation still holds what was read. They are kept in `~/.adtl/sessions/`. Content a tainted session writes, for example to a file, is remembered in the [label ledger](../../packages/gateway#label-ledger) (`~/.adtl/ledger.db`) and keeps its label when a later session reads it.
 
 ## Use it with your own MCP servers
 

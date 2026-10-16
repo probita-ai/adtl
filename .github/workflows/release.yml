@@ -1,4 +1,4 @@
-# Publishes @adtl/labels, @adtl/interceptors and @adtl/gateway to npm when a
+# Publishes @adtl/labels, @adtl/ledger, @adtl/interceptors and @adtl/gateway to npm when a
 # version tag (v0.3.2, v0.4.0-rc.1, ...) is pushed to the public repo, then
 # creates the GitHub release from that version's CHANGELOG section.
 #
@@ -6,7 +6,7 @@
 # on npmjs.com must name this repo and this workflow file (release.yml) as its
 # trusted publisher. Provenance is attached automatically.
 #
-# To release: bump all three packages and the VERSION constants, add a
+# To release: bump all four packages and the VERSION constants, add a
 # CHANGELOG section, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
 name: Release
 
@@ -49,7 +49,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           dist_tag=latest
           case "$version" in *-*) dist_tag=next ;; esac
-          for p in labels interceptors gateway; do
+          for p in labels ledger interceptors gateway; do
             name="@adtl/$p"
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "$name@$version is already on npm, skipping"

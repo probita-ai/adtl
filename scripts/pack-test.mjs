@@ -19,7 +19,7 @@ mkdirSync(app);
 
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
 
-for (const p of ["labels", "interceptors", "gateway"]) {
+for (const p of ["labels", "ledger", "interceptors", "gateway"]) {
   run("npm", ["pack", "--pack-destination", tarballs], join(root, "packages", p));
 }
 const files = readdirSync(tarballs).map((f) => join(tarballs, f));
@@ -33,7 +33,8 @@ console.log(`installed into ${app}`);
 copyFileSync(join(root, "examples/fake-github/server.mjs"), join(app, "fake-github.mjs"));
 copyFileSync(join(root, "examples/adtl.yaml"), join(app, "adtl.yaml"));
 const yaml = run("node", ["-e", "process.stdout.write(require('fs').readFileSync('adtl.yaml','utf8').replace(/args: \\[fake-github\\/server.mjs\\]/, 'args: [fake-github.mjs]'))"], app);
-writeFileSync(join(app, "adtl.yaml"), yaml);
+// A ledger next to the config, so the test leaves nothing in ~/.adtl.
+writeFileSync(join(app, "adtl.yaml"), `${yaml}\nledger:\n  path: ./ledger.db\n`);
 
 writeFileSync(
   join(app, "check.mjs"),

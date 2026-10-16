@@ -17,6 +17,11 @@
  * by Claude Code's session id, which the gateway reads from
  * `CLAUDE_CODE_SESSION_ID`.
  *
+ * With a ledger, PostToolUse also re-labels output that contains content a
+ * tainted session wrote earlier, and, when this session is tainted, records
+ * what the tool was given (file contents, edits, prompts) and the lines a
+ * shell command added to files.
+ *
  * Errors fail closed: a PreToolUse hook that can't decide denies the call.
  */
 import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -29,7 +34,9 @@ import {
   type Decision,
   type PolicyDecision,
   type SessionStore,
+  join,
 } from "@adtl/labels";
+import { chunkHashes, valueHashes, type Ledger } from "@adtl/ledger";
 import type { AuditEntry, AuditSink } from "../audit.js";
 import { CLAUDE_CODE_PRESET, CLAUDE_CODE_SERVER } from "./preset.js";
 
@@ -52,8 +59,10 @@ export interface HookOptions {
   /** `audit`: decide and log, but never deny or ask. */
   mode?: "active" | "audit";
   audit?: AuditSink;
-  /** Files the agent must not change: the ADTL config and the session directory. */
-  protect?: { configPath?: string; sessionsDir?: string };
+  /** Label ledger shared with the gateway. */
+  ledger?: Ledger;
+  /** Files the agent must not change: the ADTL config, the session directory and the ledger. */
+  protect?: { configPath?: string; sessionsDir?: string; ledgerPath?: string };
 }
 
 /** What the hook process prints and exits with. */
@@ -115,6 +124,10 @@ function protectedTarget(input: HookInput, route: { server: string; tool: string
     if (protect.sessionsDir && inside(abs, resolve(protect.sessionsDir))) {
       return { decision: "block", reason: "The agent may not change ADTL session labels" };
     }
+    // Prefix match also covers SQLite's -wal and -shm files.
+    if (protect.ledgerPath && abs.startsWith(resolve(protect.ledgerPath))) {
+      return { decision: "block", reason: "The agent may not change the ADTL ledger" };
+    }
   }
   const command = typeof args.command === "string" ? args.command : undefined;
   if (command !== undefined && ["Bash", "Monitor"].includes(route.tool)) {
@@ -122,8 +135,25 @@ function protectedTarget(input: HookInput, route: { server: string; tool: string
     if (marks.some((m) => command.includes(m))) {
       return { decision: "ask", reason: "This command touches ADTL session labels" };
     }
+    const ledgerMarks = ["ledger.db", "ledger declassify", protect.ledgerPath].filter((m): m is string => !!m);
+    if (ledgerMarks.some((m) => command.includes(m))) {
+      return { decision: "ask", reason: "This command touches the ADTL ledger" };
+    }
   }
   return undefined;
+}
+
+/** Text a shell command added to files, from Claude Code's `bashEditDiff` (one string per file). */
+export function addedLines(output: unknown): string[] {
+  const files = isRecord(output) && isRecord(output.bashEditDiff) && Array.isArray(output.bashEditDiff.files) ? output.bashEditDiff.files : [];
+  const out: string[] = [];
+  for (const f of files) {
+    const hunks = isRecord(f) && Array.isArray(f.hunks) ? f.hunks : [];
+    const lines = hunks.flatMap((h) => (isRecord(h) && Array.isArray(h.lines) ? h.lines : []));
+    const added = lines.filter((l): l is string => typeof l === "string" && l.startsWith("+")).map((l) => l.slice(1));
+    if (added.length) out.push(added.join("\n"));
+  }
+  return out;
 }
 
 export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
@@ -139,9 +169,22 @@ export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
   const base = { ts, sessionId: input.session_id, event: "tools/call" as const, ...route, via: "claude-code-hook" as const };
 
   if (event !== "PreToolUse") {
-    const label = labelResult({ ...route, result: input.tool_response ?? input.error ?? null }, config);
+    const output = input.tool_response ?? input.error ?? null;
+    let label = labelResult({ ...route, result: output }, config);
+    let ledger: { chunks: number; writers: string[] } | undefined;
+    if (opts.ledger) {
+      const match = opts.ledger.lookup(valueHashes(output));
+      if (match) {
+        label = join(label, match.label);
+        ledger = { chunks: match.chunks, writers: match.writers };
+      }
+      // What the tool was given came from the session as it was before this output.
+      const before = opts.sessions.get(input.session_id);
+      const written = [...valueHashes(input.tool_input ?? {}), ...addedLines(output).flatMap(chunkHashes)];
+      opts.ledger.record(written, before, input.session_id, route);
+    }
     const sessionLabel = opts.sessions.observe(input.session_id, label);
-    opts.audit?.write({ ...base, outcome: "forwarded", label, sessionLabel, durationMs: 0 });
+    opts.audit?.write({ ...base, outcome: "forwarded", label, ...(ledger ? { ledger } : {}), sessionLabel, durationMs: 0 });
     return NOTHING;
   }
 

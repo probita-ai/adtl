@@ -45,7 +45,7 @@
     "zod": "3.25.76"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "publishConfig": {
     "access": "public"

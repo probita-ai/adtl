@@ -8,6 +8,11 @@
  *   against the session's accumulated label and the policy, returning
  *   allow / ask / block.
  *
+ * With a ledger, `adtl.label` also re-labels content that a tainted session
+ * wrote earlier (looked up by content hash), and records the text of the
+ * call's arguments when the session is tainted, so the label follows that
+ * text into files, memory servers and other agents.
+ *
  * Both share one SessionStore keyed by `context.sessionId`. Sharing state
  * between interceptor calls is listed as "Future" in SEP-2624, so ADTL keeps it
  * inside this interceptor server for now.
@@ -22,6 +27,7 @@
 import {
   InMemorySessionStore,
   attachLabel,
+  join,
   callHash,
   evaluatePolicy,
   labelResult,
@@ -31,6 +37,7 @@ import {
   type Label,
   type SessionStore,
 } from "@adtl/labels";
+import { valueHashes, type Ledger } from "@adtl/ledger";
 import { z } from "zod";
 import type {
   InterceptorDefinition,
@@ -123,6 +130,8 @@ function hookMatches(def: InterceptorDefinition, event: string, phase?: string):
 export interface AdtlInterceptorsOptions {
   config: AdtlConfig;
   sessions?: SessionStore;
+  /** Label ledger shared with other ADTL processes. */
+  ledger?: Ledger;
   /** Clock for durationMs; injectable for tests. */
   now?: () => number;
 }
@@ -130,11 +139,13 @@ export interface AdtlInterceptorsOptions {
 export class AdtlInterceptors {
   readonly config: AdtlConfig;
   readonly sessions: SessionStore;
+  readonly ledger: Ledger | undefined;
   private readonly now: () => number;
 
   constructor(options: AdtlInterceptorsOptions) {
     this.config = options.config;
     this.sessions = options.sessions ?? new InMemorySessionStore();
+    this.ledger = options.ledger;
     this.now = options.now ?? (() => performance.now());
   }
 
@@ -212,7 +223,7 @@ export class AdtlInterceptors {
       resource = typeof rpcParams?.uri === "string" ? rpcParams.uri : config.resource;
     }
 
-    const label = labelResult(
+    let label = labelResult(
       {
         server: config.server,
         ...(tool !== undefined ? { tool } : {}),
@@ -224,9 +235,25 @@ export class AdtlInterceptors {
       this.config,
     );
 
+    const info: Record<string, unknown> = {};
+    if (this.ledger) {
+      const match = this.ledger.lookup(valueHashes(result));
+      if (match) {
+        label = join(label, match.label);
+        info.ledger = { chunks: match.chunks, writers: match.writers };
+      }
+    }
+    info.label = label;
+
     const sessionId = params.context?.sessionId;
-    const info: Record<string, unknown> = { label };
     if (sessionId) {
+      // What the call sent was produced by the session as it was before this result.
+      const before = this.sessions.get(sessionId);
+      const sent = rpcParams?.arguments;
+      if (this.ledger && sent !== undefined) {
+        const source = { server: config.server, ...(tool !== undefined ? { tool } : {}), ...(prompt !== undefined ? { prompt } : {}) };
+        this.ledger.record(valueHashes(sent), before, sessionId, source);
+      }
       info.sessionLabel = this.sessions.observe(sessionId, label);
     } else {
       info.warning = "No context.sessionId: the result was labeled but not recorded in any session";

@@ -100,6 +100,8 @@ const config = join(work, "adtl.yaml");
 writeFileSync(
   config,
   readFileSync(EXAMPLE_CONFIG, "utf8").replace(/gateway:[\s\S]*$/, "") +
+    // A throwaway ledger, so the demo leaves nothing in ~/.adtl.
+    `ledger:\n  path: ${JSON.stringify(join(work, "ledger.db"))}\n` +
     `gateway:\n  audit: ${JSON.stringify(audit)}\n  upstreams:\n    github:\n      command: ${JSON.stringify(process.execPath)}\n` +
     `      args: [${JSON.stringify(FAKE_GITHUB)}]\n      env: { FAKE_GITHUB_POSTED: ${JSON.stringify(posted2)} }\n`,
 );

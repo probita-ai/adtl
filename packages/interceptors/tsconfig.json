@@ -5,5 +5,5 @@
     "outDir": "dist"
   },
   "include": ["src"],
-  "references": [{ "path": "../labels" }]
+  "references": [{ "path": "../labels" }, { "path": "../ledger" }]
 }

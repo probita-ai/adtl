@@ -8,6 +8,8 @@
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { FileSessionStore } from "@adtl/labels";
+import { Ledger, defaultLedgerPath } from "@adtl/ledger";
+import { dirname, resolve } from "node:path";
 import { AdtlInterceptors, VERSION } from "./adtlInterceptors.js";
 import { ConfigError, loadConfigFile } from "./loadConfig.js";
 import { createInterceptorServer } from "./server.js";
@@ -62,9 +64,13 @@ async function main(): Promise<void> {
   const config = await loadConfigFile(args.config);
   const sessionsDir = args.sessionsDir ?? (process.env.ADTL_SESSIONS_DIR?.trim() || undefined);
   const sessions = sessionsDir ? new FileSessionStore(sessionsDir) : undefined;
-  const server = createInterceptorServer(new AdtlInterceptors({ config, ...(sessions ? { sessions } : {}) }));
+  const ledgerPath = config.ledger.path ? resolve(dirname(resolve(args.config)), config.ledger.path) : defaultLedgerPath();
+  const ledger = config.ledger.enabled ? new Ledger(ledgerPath, { retentionDays: config.ledger.retentionDays }) : undefined;
+  const server = createInterceptorServer(
+    new AdtlInterceptors({ config, ...(sessions ? { sessions } : {}), ...(ledger ? { ledger } : {}) }),
+  );
   await server.connect(new StdioServerTransport());
-  console.error(`adtl-interceptors ${VERSION} ready (config: ${args.config}${sessionsDir ? `, sessions: ${sessionsDir}` : ""})`);
+  console.error(`adtl-interceptors ${VERSION} ready (config: ${args.config}${sessionsDir ? `, sessions: ${sessionsDir}` : ""}${ledger ? `, ledger: ${ledger.path}` : ""})`);
 }
 
 main().catch((err: unknown) => {

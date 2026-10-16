@@ -8,3 +8,4 @@ export * from "./gateway.js";
 export * from "./startup.js";
 export * from "./init/index.js";
 export * from "./hooks/index.js";
+export * from "./ledgerCli.js";
