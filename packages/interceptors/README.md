@@ -23,7 +23,9 @@ The server speaks MCP over stdio. It declares `capabilities.extensions["io.model
 
 - `config.server` (required): the upstream server id, as named under `servers:` in the config
 - `context.sessionId`: the session whose labels are read and updated. Without it, `adtl.policy` blocks (fails closed).
-- `ask` and `block` are returned as `valid: false, severity: "error"`, with `info["adtl/decision"]` set to `"ask"` or `"block"`. The draft has no "ask" outcome yet.
+- `context.target`: the upstream server the call goes to. It is part of the call binding hash, so set it.
+- `ask` and `block` are returned as `valid: false, severity: "error"`, with `info["adtl/decision"]` set to `"ask"` or `"block"`. An `ask` also carries `confirmation: { id, reason, callHash, expiresAt, token }`, following the proposal in [experimental-ext-interceptors#45](https://github.com/modelcontextprotocol/experimental-ext-interceptors/pull/45). `callHash` covers `{ event, phase, target, payload }`. An invoker that doesn't implement confirmations blocks the call.
+- After a human approves, invoke `adtl.policy` again with the same payload and `context.confirmations: [{ interceptor: "adtl.policy", id, callHash, token, decidedAt }]`. The call is then allowed, once. A confirmation never turns a `block` into an allow, and is rejected for another call, another session, or after `expiresAt`.
 - `adtl.label` accepts the response payload as `{ method, params, result }`, or as a bare result together with `config.tool`.
 
 ## Library use

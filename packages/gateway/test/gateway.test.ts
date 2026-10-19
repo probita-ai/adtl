@@ -148,9 +148,12 @@ describe("adtl-gateway", () => {
   });
 
   describe("approvals", () => {
-    async function untrustedSession(decision: "allow" | "deny" | "never", timeoutMs = 5000) {
+    async function untrustedSession(decision: "allow" | "deny" | "never", timeoutMs = 5000, core?: AdtlInterceptors) {
       const push = new AutoAnswer(decision);
-      const s = await setup({ approvals: new ApprovalBroker({ notifiers: [push], timeoutMs }) });
+      const s = await setup({
+        approvals: new ApprovalBroker({ notifiers: [push], timeoutMs }),
+        ...(core ? { interceptorsServer: createInterceptorServer(core) } : {}),
+      });
       await s.call("github__read_issue", { repo: "acme/website", number: 42 });
       return { ...s, push };
     }
@@ -166,12 +169,45 @@ describe("adtl-gateway", () => {
       expect(audit.entries[1]).toMatchObject({ outcome: "forwarded", decision: "ask", approval: { outcome: "approved", channel: "auto" } });
     });
 
+    it("checks an approved call again with the confirmation, bound to the target", async () => {
+      const contexts: unknown[] = [];
+      const core = new AdtlInterceptors({ config: parseConfigText(readFileSync(CONFIG, "utf8")) });
+      const invoke = core.invoke.bind(core);
+      core.invoke = (p) => {
+        if (p.name === "adtl.policy") contexts.push(p.context);
+        return invoke(p);
+      };
+      const { call, posted } = await untrustedSession("allow", 5000, core);
+      await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });
+      expect(posted).toHaveLength(1);
+      // read_issue, the asked post_comment, then the recheck.
+      expect(contexts).toHaveLength(3);
+      expect(contexts[1]).toMatchObject({ target: "github" });
+      expect(contexts[1]).not.toHaveProperty("confirmations");
+      expect(contexts[2]).toMatchObject({ target: "github", confirmations: [{ interceptor: "adtl.policy", token: expect.stringMatching(/^adtlc1\./) }] });
+    });
+
+    it("stops an approved call that fails the recheck", async () => {
+      const core = new AdtlInterceptors({ config: parseConfigText(readFileSync(CONFIG, "utf8")) });
+      const invoke = core.invoke.bind(core);
+      // A confirmation that no longer matches the call, as if the call had changed.
+      core.invoke = (p) =>
+        invoke(p.context?.confirmations ? { ...p, context: { ...p.context, confirmations: p.context.confirmations.map((c) => ({ ...c, callHash: "sha256:other" })) } } : p);
+      const { call, posted, audit } = await untrustedSession("allow", 5000, core);
+      const r = await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });
+      expect(r.isError).toBe(true);
+      expect(textOf(r)).toContain("after it was approved");
+      expect(posted).toHaveLength(0);
+      expect(audit.entries[1]).toMatchObject({ outcome: "blocked", decision: "ask", approval: { outcome: "approved" } });
+    });
+
     it("stops the call when the human denies it", async () => {
       const { call, posted, audit } = await untrustedSession("deny");
       const r = await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });
       expect(r.isError).toBe(true);
       expect(textOf(r)).toContain("denied");
       expect(r._meta?.[GATEWAY_DECISION_KEY]).toMatchObject({ decision: "ask", approval: { outcome: "denied" } });
+      expect(JSON.stringify(r)).not.toContain("adtlc1"); // the confirmation token never reaches the agent
       expect(posted).toHaveLength(0);
       expect(audit.entries[1]).toMatchObject({ outcome: "blocked", decision: "ask", approval: { outcome: "denied" } });
     });

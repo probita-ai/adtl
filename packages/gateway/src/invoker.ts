@@ -6,7 +6,8 @@
  * - Receiving (response phase, upstream → gateway): Validate (parallel) →
  *   Mutate (sequential).
  *
- * Only `severity: "error"` blocks. Audit-mode interceptors never block, and
+ * Only `severity: "error"` blocks. A blocking result with a `confirmation`
+ * request is an "ask"; the gateway may ask a human and re-validate. Audit-mode interceptors never block, and
  * their mutations are not applied. An interceptor that fails (error or
  * timeout) blocks the message unless it declares `failOpen: true`.
  *
@@ -18,6 +19,7 @@ import {
   DECISION_INFO_KEY,
   INVOKE_METHOD,
   LIST_METHOD,
+  type ConfirmationRequest,
   type InterceptorDefinition,
   type InterceptorResult,
   type InvocationContext,
@@ -49,6 +51,8 @@ export interface Blocked {
   interceptor: string;
   decision: Decision;
   reason: string;
+  /** Set when the validator would accept a human confirmation. */
+  confirmation?: ConfirmationRequest;
 }
 
 export interface PhaseOutcome {
@@ -176,9 +180,12 @@ export class InterceptorInvoker {
       if (r.valid || r.severity !== "error" || this.isAudit(i)) return;
       // Keep the strictest rejection, so an "ask" never hides another validator's "block".
       if (!out.blocked || out.blocked.decision === "ask") {
-        const decision = (r.info?.[DECISION_INFO_KEY] as Decision | undefined) ?? "block";
+        // Older ADTL interceptor servers carry "ask" only in info.
+        const decision = r.confirmation ? "ask" : ((r.info?.[DECISION_INFO_KEY] as Decision | undefined) ?? "block");
         const reason = r.messages?.map((m) => m.message).join("; ") || `${i.definition.name} rejected the call`;
-        if (!out.blocked || decision === "block") out.blocked = { interceptor: i.definition.name, decision, reason };
+        if (!out.blocked || decision === "block") {
+          out.blocked = { interceptor: i.definition.name, decision, reason, ...(r.confirmation ? { confirmation: r.confirmation } : {}) };
+        }
       }
       ok = false;
     });

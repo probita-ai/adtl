@@ -13,6 +13,14 @@
  * call's arguments when the session is tainted, so the label follows that
  * text into files, memory servers and other agents.
  *
+ * An "ask" is a blocking result with a `confirmation` request (the SEP-2624
+ * draft in experimental-ext-interceptors#45), so an invoker that does not
+ * implement confirmations blocks the call. The request carries the call
+ * binding hash and an HMAC token over its id, that hash, the session and the
+ * expiry. When the invoker re-invokes adtl.policy with that confirmation in
+ * `context.confirmations`, the call is allowed, once. ADTL also still sets
+ * `info["adtl/decision"]` for invokers that read it.
+ *
  * Both share one SessionStore keyed by `context.sessionId`. Sharing state
  * between interceptor calls is listed as "Future" in SEP-2624, so ADTL keeps it
  * inside this interceptor server for now.
@@ -24,11 +32,12 @@
  *   prompt          prompt name, if the payload does not carry it
  *   toolAnnotations MCP tool annotations from tools/list, e.g. { openWorldHint: true }
  */
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   InMemorySessionStore,
   attachLabel,
   join,
-  callHash,
+  callBindingHash,
   evaluatePolicy,
   labelResult,
   toolEgress,
@@ -40,6 +49,7 @@ import {
 import { valueHashes, type Ledger } from "@adtl/ledger";
 import { z } from "zod";
 import type {
+  ConfirmationRequest,
   InterceptorDefinition,
   InterceptorResult,
   InvocationParams,
@@ -50,7 +60,7 @@ import type {
 export const LABEL_INTERCEPTOR = "adtl.label";
 export const POLICY_INTERCEPTOR = "adtl.policy";
 
-/** Key in `ValidationResult.info` carrying ADTL's decision (SEP-2624 has no "ask" outcome yet). */
+/** Key in `ValidationResult.info` carrying ADTL's decision, for invokers that predate `confirmation`. */
 export const DECISION_INFO_KEY = "adtl/decision";
 
 export const VERSION = "0.4.0";
@@ -134,19 +144,36 @@ export interface AdtlInterceptorsOptions {
   ledger?: Ledger;
   /** Clock for durationMs; injectable for tests. */
   now?: () => number;
+  /** Wall clock for confirmation expiry; injectable for tests. */
+  clock?: () => Date;
+  /** Key for confirmation tokens. Defaults to a random key per process. */
+  confirmationSecret?: Buffer;
+  /** How long a confirmation request stays valid. Longer than the gateway's longest approval wait (1 hour). */
+  confirmationTtlMs?: number;
 }
+
+const CONFIRMATION_TOKEN_PREFIX = "adtlc1";
+const DEFAULT_CONFIRMATION_TTL_MS = 2 * 60 * 60 * 1000;
 
 export class AdtlInterceptors {
   readonly config: AdtlConfig;
   readonly sessions: SessionStore;
   readonly ledger: Ledger | undefined;
   private readonly now: () => number;
+  private readonly clock: () => Date;
+  private readonly secret: Buffer;
+  private readonly ttlMs: number;
+  /** Confirmation ids already used, with their expiry (ms), so each one allows one call. */
+  private readonly usedConfirmations = new Map<string, number>();
 
   constructor(options: AdtlInterceptorsOptions) {
     this.config = options.config;
     this.sessions = options.sessions ?? new InMemorySessionStore();
     this.ledger = options.ledger;
     this.now = options.now ?? (() => performance.now());
+    this.clock = options.clock ?? (() => new Date());
+    this.secret = options.confirmationSecret ?? randomBytes(32);
+    this.ttlMs = options.confirmationTtlMs ?? DEFAULT_CONFIRMATION_TTL_MS;
   }
 
   /** Interceptor definitions, optionally filtered to those hooking `event`. */
@@ -282,8 +309,12 @@ export class AdtlInterceptors {
         { interceptor: POLICY_INTERCEPTOR },
       );
     }
-    const args = rpcParams.arguments ?? {};
-    const hash = callHash(config.server, tool, args);
+    const hash = callBindingHash({
+      event: params.event,
+      phase: params.phase,
+      target: params.context?.target ?? null,
+      payload: params.payload,
+    });
 
     const sessionId = params.context?.sessionId;
     if (!sessionId) {
@@ -298,7 +329,52 @@ export class AdtlInterceptors {
       tool,
       egress: toolEgress(this.config, config.server, tool),
     });
-    return this.decision(params, d.decision, d.reason, d.matched, hash, session);
+    if (d.decision !== "ask") return this.decision(params, d.decision, d.reason, d.matched, hash, session);
+
+    const extra: Record<string, unknown> = {};
+    if (params.context?.confirmations?.length) {
+      const confirmed = this.acceptConfirmation(params, hash, sessionId);
+      if (typeof confirmed !== "string") {
+        extra.confirmed = confirmed;
+        return this.decision(params, "allow", `Confirmed by a human: ${d.reason}`, d.matched, hash, session, extra);
+      }
+      extra.confirmationRejected = confirmed;
+    }
+    const confirmation = this.confirmationRequest(d.reason, hash, sessionId);
+    return this.decision(params, "ask", d.reason, d.matched, hash, session, extra, confirmation);
+  }
+
+  private confirmationRequest(reason: string, hash: string, sessionId: string): ConfirmationRequest {
+    const id = randomUUID();
+    const exp = Math.floor((this.clock().getTime() + this.ttlMs) / 1000);
+    const token = `${CONFIRMATION_TOKEN_PREFIX}.${exp}.${this.mac(id, hash, sessionId, exp)}`;
+    return { id, reason, callHash: hash, expiresAt: new Date(exp * 1000).toISOString(), token };
+  }
+
+  /**
+   * Accept a confirmation for this exact call binding and session, issued by
+   * this server, unexpired and not used before. Returns why it was rejected otherwise.
+   */
+  private acceptConfirmation(params: InvocationParams, hash: string, sessionId: string): Record<string, unknown> | string {
+    const c = params.context!.confirmations!.find((x) => x.interceptor === POLICY_INTERCEPTOR);
+    if (!c) return `no confirmation from ${POLICY_INTERCEPTOR}`;
+    if (c.callHash !== hash) return "the confirmation is for a different call";
+    const parts = (c.token ?? "").split(".");
+    if (parts.length !== 3 || parts[0] !== CONFIRMATION_TOKEN_PREFIX || !/^\d+$/.test(parts[1]!)) return "invalid token";
+    const exp = Number(parts[1]);
+    const expected = Buffer.from(this.mac(c.id, hash, sessionId, exp));
+    const given = Buffer.from(parts[2]!);
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) return "invalid token";
+    const now = this.clock().getTime();
+    if (now > exp * 1000) return "the confirmation has expired";
+    for (const [id, until] of this.usedConfirmations) if (until < now) this.usedConfirmations.delete(id);
+    if (this.usedConfirmations.has(c.id)) return "the confirmation was already used";
+    this.usedConfirmations.set(c.id, exp * 1000);
+    return { id: c.id, decidedAt: c.decidedAt, ...(c.principal ? { principal: c.principal } : {}) };
+  }
+
+  private mac(id: string, hash: string, sessionId: string, exp: number): string {
+    return createHmac("sha256", this.secret).update(`${id}\n${hash}\n${sessionId}\n${exp}`).digest("base64url");
   }
 
   private decision(
@@ -308,9 +384,11 @@ export class AdtlInterceptors {
     matched: string[],
     hash: string,
     session?: Label,
+    extra: Record<string, unknown> = {},
+    confirmation?: ConfirmationRequest,
   ): ValidationResult {
     const allowed = decision === "allow";
-    const info: Record<string, unknown> = { [DECISION_INFO_KEY]: decision, reason, matched, callHash: hash };
+    const info: Record<string, unknown> = { [DECISION_INFO_KEY]: decision, reason, matched, callHash: hash, ...extra };
     if (session) info.sessionLabel = session;
     return {
       interceptor: POLICY_INTERCEPTOR,
@@ -319,6 +397,7 @@ export class AdtlInterceptors {
       valid: allowed,
       severity: allowed ? "info" : "error",
       ...(allowed ? {} : { messages: [{ path: "params.name", message: reason, severity: "error" as const }] }),
+      ...(confirmation ? { confirmation } : {}),
       info,
     };
   }

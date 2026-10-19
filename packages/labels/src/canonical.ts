@@ -45,3 +45,17 @@ export function digest(value: unknown): string {
 export function callHash(server: string, tool: string, args: unknown): string {
   return digest({ server, tool, arguments: args ?? {} });
 }
+
+/** What a SEP-2624 confirmation is bound to: one payload, in one phase, sent to (or received from) one peer. */
+export interface CallBinding {
+  event: string;
+  phase: "request" | "response";
+  /** `context.target`; null if the invoker did not set it. */
+  target: string | null;
+  payload: unknown;
+}
+
+/** SEP-2624 call binding hash: `sha256:` + hex SHA-256 of the binding's canonical form. */
+export function callBindingHash({ event, phase, target, payload }: CallBinding): string {
+  return digest({ event, phase, target: target ?? null, payload: payload ?? null });
+}
