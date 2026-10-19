@@ -32,6 +32,8 @@ export interface AuditEntry {
   label?: unknown;
   /** Present when the label ledger recognized content in the result: how many chunks matched, and which sessions wrote them. */
   ledger?: unknown;
+  /** Present when the result carried record label stamps: how many, and which sessions wrote them. */
+  records?: unknown;
   sessionLabel?: unknown;
   warnings?: string[];
   durationMs: number;

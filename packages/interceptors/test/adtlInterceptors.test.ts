@@ -18,7 +18,10 @@ describe("discovery", () => {
       ["adtl.label", "mutation"],
       ["adtl.policy", "validation"],
     ]);
-    expect(defs[0]?.hooks).toEqual([{ events: ["tools/call", "resources/read", "prompts/get"], phase: "response" }]);
+    expect(defs[0]?.hooks).toEqual([
+      { events: ["tools/call", "resources/read", "prompts/get"], phase: "response" },
+      { events: ["tools/call"], phase: "request" },
+    ]);
     expect(defs[1]?.hooks).toEqual([{ events: ["tools/call"], phase: "request" }]);
     expect(defs.every((d) => d.failOpen === false)).toBe(true);
   });

@@ -3,12 +3,10 @@
  *
  * The ledger recognizes text by its hashes, so it only follows the label when
  * the memory server returns the text the session sent. Servers that extract
- * facts with a model on write, or consolidate records, return text that
- * matches nothing, and the read falls back to the tool's own (trusted) rule.
- *
- * The `it.fails` tests document that gap: they pass while the gap is open and
- * start failing once the label travels with the record, at which point they
- * become plain `it` tests.
+ * facts with a model on write return text that matches nothing. For those,
+ * the label travels with the record: `labelInto` stamps it into the record's
+ * metadata, `readLabels` reads it back. Servers that drop the stamp (here, on
+ * consolidation) are given a strict rule once, in the config.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -31,8 +29,8 @@ const CONFIG = fileURLToPath(new URL("../../../examples/adtl.yaml", import.meta.
 const MEMORY_SERVER = `servers:
   memory:
     tools:
-      add_memory:    { integrity: trusted, confidentiality: public, egress: internal }
-      search_memory: { integrity: trusted, confidentiality: public, egress: none }
+      add_memory:    { integrity: trusted, confidentiality: public, egress: internal, labelInto: metadata }
+      search_memory: { integrity: trusted, confidentiality: public, egress: none, readLabels: true }
       consolidate:   { integrity: trusted, confidentiality: public, egress: internal }
 `;
 
@@ -51,8 +49,8 @@ async function linked(server: { connect(t: unknown): Promise<void> }, name: stri
 }
 
 /** One interceptor core, ledger and memory store; one gateway per session, as with separate agent sessions. */
-function world() {
-  const config = parseConfigText(readFileSync(CONFIG, "utf8").replace("servers:\n", MEMORY_SERVER));
+function world(memoryServer = MEMORY_SERVER) {
+  const config = parseConfigText(readFileSync(CONFIG, "utf8").replace("servers:\n", memoryServer));
   const ledger = new Ledger(join(mkdtempSync(join(tmpdir(), "adtl-memory-")), "ledger.db"));
   const core = new AdtlInterceptors({ config, ledger });
   const memories: unknown[] = [];
@@ -88,29 +86,49 @@ function world() {
     return audit.entries.at(-1)!;
   }
 
-  return { monday, tuesday };
+  return { session, monday, tuesday, memories };
 }
 
-describe("ledger through a memory server: written Monday, read Tuesday", () => {
+describe("labels through a memory server: written Monday, read Tuesday", () => {
   it("follows the label when the server stores the text as sent (infer: false)", async () => {
     const w = world();
     await w.monday({ infer: false });
     expect(await w.tuesday()).toMatchObject({ label: { integrity: "untrusted" }, ledger: { writers: ["mon"] } });
   });
 
-  // Known gap: extracted facts match no recorded hash, so the read comes back trusted.
-  it.fails("follows the label when the server extracts facts on write (infer defaults to true)", async () => {
+  it("follows the label when the server extracts facts on write (infer defaults to true)", async () => {
     const w = world();
     await w.monday({});
-    expect(await w.tuesday()).toMatchObject({ label: { integrity: "untrusted" }, ledger: { writers: ["mon"] } });
+    expect(await w.tuesday()).toMatchObject({ label: { integrity: "untrusted" }, records: { writers: ["mon"] } });
   });
 
-  // Known gap: the merged record matches nothing, though its strictest input was tainted.
-  it.fails("keeps the strictest label when the server consolidates records", async () => {
+  it("replaces a stamp the agent supplied", async () => {
     const w = world();
+    await w.monday({ metadata: { topic: "release", "adtl/record-label": { integrity: "trusted", confidentiality: "public", writer: "admin" } } });
+    expect(w.memories[0]).toMatchObject({ metadata: { topic: "release", "adtl/record-label": { integrity: "untrusted", writer: "mon" } } });
+    expect(await w.tuesday()).toMatchObject({ label: { integrity: "untrusted" }, records: { writers: ["mon"] } });
+  });
+
+  it("never relaxes a label: a trusted stamp on a strict tool stays strict", async () => {
+    const w = world(MEMORY_SERVER.replace("search_memory: { integrity: trusted", "search_memory: { integrity: untrusted"));
+    const call = await w.session("clean");
+    await call("memory__add_memory", { text: "The release checklist lives in docs/release.md" });
+    expect(await w.tuesday()).toMatchObject({ label: { integrity: "untrusted" } });
+  });
+
+  it("leaves records from a clean session trusted", async () => {
+    const w = world();
+    const call = await w.session("clean");
+    await call("memory__add_memory", { text: "The release checklist lives in docs/release.md" });
+    expect(await w.tuesday()).toMatchObject({ label: { integrity: "trusted" }, records: { writers: ["clean"] } });
+  });
+
+  it("is strict for a server declared to drop stamps when it consolidates", async () => {
+    // Consolidation keeps no metadata, so this server's reads get a strict rule, once, in the config.
+    const w = world(MEMORY_SERVER.replace("search_memory: { integrity: trusted", "search_memory: { integrity: untrusted"));
     const mon = await w.monday({ infer: false });
     await mon("memory__add_memory", { text: "The release checklist lives in docs/release.md", infer: false });
     await mon("memory__consolidate");
-    expect(await w.tuesday()).toMatchObject({ label: { integrity: "untrusted" }, ledger: { writers: ["mon"] } });
+    expect(await w.tuesday()).toMatchObject({ label: { integrity: "untrusted" } });
   });
 });

@@ -2,7 +2,14 @@
 
 ## Unreleased
 
+### `@adtl/labels`
+- Tool rules take `labelInto` (stamp the session label into a per-record argument such as `metadata`) and `readLabels` (join stamps found in results, stricter only), for memory servers that extract facts or merge records, which the ledger can't recognize. `stampRecordLabel()` and `readRecordLabels()`.
+
+### `@adtl/interceptors`
+- `adtl.label` also hooks the request phase of `tools/call`, to stamp records for tools with `labelInto`.
+
 ### `@adtl/gateway`
+- Audit entries get `records: { stamps, writers }` when a result carried record stamps.
 - The README shows the architecture sketch on npm too.
 
 ## 0.4.0 — experimental
