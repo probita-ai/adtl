@@ -1,6 +1,6 @@
 /**
  * The gateway: one MCP server facing the agent, many MCP clients facing the
- * upstream servers, and an interceptor chain in between.
+ * upstream servers, and the interceptors in between.
  *
  * tools/list  → every upstream's tools, renamed <upstream>__<tool>
  * tools/call  → request interceptors (adtl.policy) → upstream → response
@@ -49,7 +49,7 @@ import type { InvocationContext } from "@adtl/interceptors";
 import type { ApprovalBroker, ApprovalResult } from "./approvals.js";
 import type { AuditEntry, AuditSink } from "./audit.js";
 import { TOOL_SEPARATOR } from "./config.js";
-import type { Blocked, ChainOutcome, InterceptorInvoker } from "./invoker.js";
+import type { Blocked, PhaseOutcome, InterceptorInvoker } from "./invoker.js";
 
 export const GATEWAY_VERSION = "0.4.0";
 
@@ -132,7 +132,7 @@ function approvalMessage(b: Blocked, a: ApprovalResult): string {
   }
 }
 
-function infoOf(outcome: ChainOutcome, interceptor: string): Record<string, unknown> {
+function infoOf(outcome: PhaseOutcome, interceptor: string): Record<string, unknown> {
   return outcome.results.find((r) => r.interceptor === interceptor)?.info ?? {};
 }
 
@@ -331,8 +331,8 @@ export class AdtlGateway {
   }
 
   /**
-   * Forward a resources/read or prompts/get request through the interceptor
-   * chain: request interceptors → upstream → response interceptors (adtl.label).
+   * Forward a resources/read or prompts/get request through the interceptors:
+   * request interceptors → upstream → response interceptors (adtl.label).
    * These requests have no tool result to carry an error, so a stopped request
    * becomes a JSON-RPC error.
    */

@@ -51,7 +51,7 @@ export interface Blocked {
   reason: string;
 }
 
-export interface ChainOutcome {
+export interface PhaseOutcome {
   payload: unknown;
   blocked?: Blocked;
   results: InterceptorResult[];
@@ -96,15 +96,15 @@ export class InterceptorInvoker {
     return this.interceptors.map((i) => i.definition);
   }
 
-  async runRequest(opts: InvokeOptions): Promise<ChainOutcome> {
-    const out: ChainOutcome = { payload: opts.payload, results: [], warnings: [] };
+  async runRequest(opts: InvokeOptions): Promise<PhaseOutcome> {
+    const out: PhaseOutcome = { payload: opts.payload, results: [], warnings: [] };
     if (!(await this.mutate("request", opts, out))) return out;
     await this.validate("request", opts, out);
     return out;
   }
 
-  async runResponse(opts: InvokeOptions): Promise<ChainOutcome> {
-    const out: ChainOutcome = { payload: opts.payload, results: [], warnings: [] };
+  async runResponse(opts: InvokeOptions): Promise<PhaseOutcome> {
+    const out: PhaseOutcome = { payload: opts.payload, results: [], warnings: [] };
     if (!(await this.validate("response", opts, out))) return out;
     await this.mutate("response", opts, out);
     return out;
@@ -128,8 +128,8 @@ export class InterceptorInvoker {
     return res as unknown as InterceptorResult;
   }
 
-  /** Handle an interceptor failure. Returns false if the chain must stop. */
-  private failed(i: BoundInterceptor, err: unknown, out: ChainOutcome): boolean {
+  /** Handle an interceptor failure. Returns false if the phase must stop. */
+  private failed(i: BoundInterceptor, err: unknown, out: PhaseOutcome): boolean {
     const msg = `${i.definition.name} failed: ${err instanceof Error ? err.message : String(err)}`;
     if (this.isAudit(i) || i.definition.failOpen === true) {
       out.warnings.push(msg);
@@ -140,12 +140,12 @@ export class InterceptorInvoker {
   }
 
   /** Sequential mutations, atomic: on failure the original payload is kept. */
-  private async mutate(phase: Phase, opts: InvokeOptions, out: ChainOutcome): Promise<boolean> {
-    const chain = this.select("mutation", opts.event, phase).sort(
+  private async mutate(phase: Phase, opts: InvokeOptions, out: PhaseOutcome): Promise<boolean> {
+    const selected = this.select("mutation", opts.event, phase).sort(
       (a, b) => priority(a.definition, phase) - priority(b.definition, phase) || a.definition.name.localeCompare(b.definition.name),
     );
     let payload = out.payload;
-    for (const i of chain) {
+    for (const i of selected) {
       let r: MutationResult;
       try {
         r = (await this.invoke(i, phase, opts, payload)) as MutationResult;
@@ -161,12 +161,12 @@ export class InterceptorInvoker {
   }
 
   /** Parallel validations. Only severity "error" blocks. */
-  private async validate(phase: Phase, opts: InvokeOptions, out: ChainOutcome): Promise<boolean> {
-    const chain = this.select("validation", opts.event, phase);
-    const settled = await Promise.allSettled(chain.map((i) => this.invoke(i, phase, opts, out.payload)));
+  private async validate(phase: Phase, opts: InvokeOptions, out: PhaseOutcome): Promise<boolean> {
+    const selected = this.select("validation", opts.event, phase);
+    const settled = await Promise.allSettled(selected.map((i) => this.invoke(i, phase, opts, out.payload)));
     let ok = true;
     settled.forEach((s, idx) => {
-      const i = chain[idx]!;
+      const i = selected[idx]!;
       if (s.status === "rejected") {
         if (!this.failed(i, s.reason, out)) ok = false;
         return;
