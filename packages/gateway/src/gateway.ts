@@ -1,6 +1,6 @@
 /**
  * The gateway: one MCP server facing the agent, many MCP clients facing the
- * upstream servers, and an interceptor chain in between.
+ * upstream servers, and the interceptors in between.
  *
  * tools/list  → every upstream's tools, renamed <upstream>__<tool>
  * tools/call  → request interceptors (adtl.policy) → upstream → response
@@ -15,8 +15,11 @@
  * `isError: true` explaining why, so the model can tell the user.
  *
  * An "ask" decision holds the call and asks a human through the approval
- * broker (e.g. a phone notification). Approved calls run; denied, unanswered
- * or undeliverable ones are stopped. Without an approval channel, "ask" blocks.
+ * broker (e.g. a phone notification). Once approved, the gateway checks the
+ * call again with the confirmation in `context.confirmations` (SEP-2624
+ * draft) and runs it only if every validator then allows it. Denied,
+ * unanswered or undeliverable calls are stopped. Without an approval channel,
+ * "ask" blocks.
  *
  * An optional Authorizer decides first whether the caller may use the tool,
  * resource or prompt at all; a denial stops the call before the policy runs.
@@ -49,11 +52,12 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { InvocationContext } from "@adtl/interceptors";
+import { callBindingHash } from "@adtl/labels";
 import type { ApprovalBroker, ApprovalResult } from "./approvals.js";
 import type { AuditEntry, AuditSink } from "./audit.js";
 import { authorize, type AuthorizationRequest, type Authorizer, type Denial, type Principal } from "./authorizer.js";
 import { TOOL_SEPARATOR } from "./config.js";
-import type { Blocked, ChainOutcome, InterceptorInvoker } from "./invoker.js";
+import type { Blocked, PhaseOutcome, InterceptorInvoker } from "./invoker.js";
 
 export const GATEWAY_VERSION = "0.4.0";
 
@@ -140,7 +144,7 @@ function approvalMessage(b: Blocked, a: ApprovalResult): string {
   }
 }
 
-function infoOf(outcome: ChainOutcome, interceptor: string): Record<string, unknown> {
+function infoOf(outcome: PhaseOutcome, interceptor: string): Record<string, unknown> {
   return outcome.results.find((r) => r.interceptor === interceptor)?.info ?? {};
 }
 
@@ -348,8 +352,8 @@ export class AdtlGateway {
   }
 
   /**
-   * Forward a resources/read or prompts/get request through the interceptor
-   * chain: request interceptors → upstream → response interceptors (adtl.label).
+   * Forward a resources/read or prompts/get request through the interceptors:
+   * request interceptors → upstream → response interceptors (adtl.label).
    * These requests have no tool result to carry an error, so a stopped request
    * becomes a JSON-RPC error.
    */
@@ -365,6 +369,7 @@ export class AdtlGateway {
       sessionId: this.sessionId,
       timestamp: new Date().toISOString(),
       principal: this.principal,
+      target: upstream,
     };
     const config = { server: upstream };
     const audit = this.invoker.modeOverride === "audit" ? { mode: "audit" as const } : {};
@@ -439,6 +444,7 @@ export class AdtlGateway {
       sessionId: this.sessionId,
       timestamp: new Date().toISOString(),
       principal: this.principal,
+      target: route.upstream,
     };
     const config: Record<string, unknown> = {
       server: route.upstream,
@@ -465,21 +471,24 @@ export class AdtlGateway {
 
     // 1. Request phase: adtl.policy decides whether the call may run.
     const requestPayload = { method: "tools/call", params: { name: route.tool, arguments: args } };
-    const req = await this.invoker.runRequest({ event: "tools/call", payload: requestPayload, config, context });
+    let req = await this.invoker.runRequest({ event: "tools/call", payload: requestPayload, config, context });
     const policy = infoOf(req, "adtl.policy");
     let approval: ApprovalResult | undefined;
     if (req.blocked) {
       const b = req.blocked;
+      // What the agent sees; the confirmation token stays inside the gateway.
+      const shown = { interceptor: b.interceptor, decision: b.decision, reason: b.reason };
       const stopped = { decision: b.decision, reason: b.reason, matched: policy.matched, callHash: policy.callHash, sessionLabel: policy.sessionLabel };
       const matched = Array.isArray(policy.matched) ? (policy.matched as string[]) : [];
-      if (b.decision === "ask" && this.approvals?.canApprove && typeof policy.callHash === "string") {
+      const hash = b.confirmation?.callHash ?? policy.callHash;
+      if (b.decision === "ask" && this.approvals?.canApprove && typeof hash === "string") {
         this.log.info(`ask ${name}: waiting for approval (${b.reason})`);
         approval = await this.waitForApproval(opts, () =>
           this.approvals!.request({
             sessionId: this.sessionId,
             server: route.upstream,
             tool: route.tool,
-            callHash: policy.callHash as string,
+            callHash: hash,
             reason: b.reason,
             matched,
             ...(policy.sessionLabel !== undefined ? { sessionLabel: policy.sessionLabel } : {}),
@@ -488,13 +497,33 @@ export class AdtlGateway {
         this.log.info(`ask ${name}: ${approval.outcome}`);
         if (approval.outcome !== "approved") {
           finish({ outcome: "blocked", ...stopped, approval, warnings: req.warnings });
-          return textError(approvalMessage(b, approval), { ...b, callHash: policy.callHash, approval });
+          return textError(approvalMessage(b, approval), { ...shown, callHash: policy.callHash, approval });
+        }
+        if (b.confirmation) {
+          // Check the call again with the confirmation; it runs only if every validator now allows it.
+          const c = b.confirmation;
+          const confirmations = [{
+            interceptor: b.interceptor,
+            id: c.id,
+            callHash: c.callHash,
+            ...(c.token !== undefined ? { token: c.token } : {}),
+            decidedAt: new Date().toISOString(),
+            ...(approval.approver ? { principal: { type: "user" as const, id: approval.approver } } : {}),
+          }];
+          req = await this.invoker.runRequest({ event: "tools/call", payload: requestPayload, config, context: { ...context, confirmations } });
+          const sent = callBindingHash({ event: "tools/call", phase: "request", target: route.upstream, payload: req.payload });
+          const recheck = req.blocked?.reason ?? (sent !== c.callHash ? "the call changed after it was approved" : undefined);
+          if (recheck !== undefined) {
+            finish({ outcome: "blocked", ...stopped, approval, reason: recheck, warnings: req.warnings });
+            this.log.info(`ask ${name}: approved but blocked on recheck (${recheck})`);
+            return textError(`ADTL blocked this call after it was approved: ${recheck}. The call was not run.`, { ...shown, callHash: policy.callHash, approval, reason: recheck });
+          }
         }
       } else {
         finish({ outcome: "blocked", ...stopped, warnings: req.warnings });
         this.log.info(`${b.decision} ${name}: ${b.reason}`);
         this.approvals?.blocked({ sessionId: this.sessionId, server: route.upstream, tool: route.tool, reason: b.reason, matched });
-        return textError(blockedMessage(b), { ...b, callHash: policy.callHash });
+        return textError(blockedMessage(b), { ...shown, callHash: policy.callHash });
       }
     }
     const forwarded = (req.payload as typeof requestPayload).params;

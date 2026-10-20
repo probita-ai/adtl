@@ -4,9 +4,12 @@
 
 ### `@adtl/labels`
 - Tool rules take `labelInto` (stamp the session label into a per-record argument such as `metadata`) and `readLabels` (join stamps found in results, stricter only), for memory servers that extract facts or merge records, which the ledger can't recognize. `stampRecordLabel()` and `readRecordLabels()`.
+- `callBindingHash()`.
 
 ### `@adtl/interceptors`
 - `adtl.label` also hooks the request phase of `tools/call`, to stamp records for tools with `labelInto`.
+- `adtl.policy` returns "ask" with a `confirmation` request (`id`, `reason`, `callHash`, `expiresAt`, `token`), as proposed in experimental-ext-interceptors#45, and accepts `context.confirmations` when invoked again. Each confirmation allows one call, in one session, before it expires. `info["adtl/decision"]` is still set.
+- `callHash` now covers the SEP-2624 call binding `{ event, phase, target, payload }`, so audit log hashes differ from 0.4.0.
 
 ### `@adtl/ledger`
 - `declassify()` takes a subject (e.g. the file name), kept with the reason. `declassifications()` lists recent declassifications.
@@ -18,6 +21,9 @@
 - `ledger declassify` requires `--reason`. New `ledger declassified` lists recent declassifications: when, who, which file, why.
 - Audit entries get `records: { stamps, writers }` when a result carried record stamps.
 - The README shows the architecture sketch on npm too.
+- Sets `context.target` to the upstream server on every interceptor invocation.
+- After a human approves a call, checks it again with the confirmation and runs it only if every validator allows it and the call still matches the approved hash.
+- `ChainOutcome` is now `PhaseOutcome`, since SEP-2624 no longer talks about chains.
 
 ## 0.4.0 — experimental
 

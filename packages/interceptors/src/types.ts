@@ -47,6 +47,31 @@ export interface InvocationContext {
   spanId?: string;
   timestamp?: string;
   sessionId?: string;
+  /** Peer the payload is sent to or, when receiving, came from (e.g. a server name). Part of the call binding. */
+  target?: string;
+  /** Human confirmations for this exact payload, set when the invoker re-invokes a validator after asking. */
+  confirmations?: Confirmation[];
+}
+
+/** A validator's request for human confirmation (SEP-2624 draft, experimental-ext-interceptors#45). */
+export interface ConfirmationRequest {
+  id: string;
+  reason: string;
+  /** Hash of the call binding { event, phase, target, payload }. */
+  callHash: string;
+  expiresAt?: string;
+  /** Opaque; the invoker returns it unchanged. */
+  token?: string;
+}
+
+export interface Confirmation {
+  /** Name of the validator that requested it. */
+  interceptor: string;
+  id: string;
+  callHash: string;
+  token?: string;
+  decidedAt: string;
+  principal?: { type: "user" | "service"; id?: string };
 }
 
 export interface InvocationParams {
@@ -77,6 +102,8 @@ export interface ValidationResult extends ResultBase {
   valid: boolean;
   severity?: Severity;
   messages?: ValidationMessage[];
+  /** Set with valid: false and severity: "error": the payload may proceed only if a human confirms it. */
+  confirmation?: ConfirmationRequest;
 }
 
 export interface MutationResult extends ResultBase {
@@ -111,6 +138,21 @@ export const InvocationParamsSchema = z
         spanId: z.string().optional(),
         timestamp: z.string().optional(),
         sessionId: z.string().optional(),
+        target: z.string().optional(),
+        confirmations: z
+          .array(
+            z
+              .object({
+                interceptor: z.string(),
+                id: z.string(),
+                callHash: z.string(),
+                token: z.string().optional(),
+                decidedAt: z.string(),
+                principal: z.object({ type: z.enum(["user", "service"]), id: z.string().optional() }).passthrough().optional(),
+              })
+              .passthrough(),
+          )
+          .optional(),
       })
       .passthrough()
       .optional(),
