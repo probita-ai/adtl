@@ -1,29 +1,39 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — experimental
+
+Labels now survive memory servers that rewrite what they store, the audit log is tamper-evident, "ask" follows the confirmation proposal for SEP-2624, and the gateway can check who may use a tool before the policy runs.
+
+### Breaking changes
+- `callHash` now covers the SEP-2624 call binding `{ event, phase, target, payload }`, so hashes in audit logs differ from 0.4.
+- `adtl-gateway ledger declassify` requires `--reason`.
+- `ChainOutcome` is now `PhaseOutcome` (`@adtl/gateway`), since SEP-2624 no longer has a chain concept.
+- `adtl.label` also hooks the request phase of `tools/call`. This only matters if you run ADTL's interceptors behind your own invoker.
 
 ### `@adtl/labels`
 - Tool rules take `labelInto` (stamp the session label into a per-record argument such as `metadata`) and `readLabels` (join stamps found in results, stricter only), for memory servers that extract facts or merge records, which the ledger can't recognize. `stampRecordLabel()` and `readRecordLabels()`.
 - `callBindingHash()`.
 
 ### `@adtl/interceptors`
-- `adtl.label` also hooks the request phase of `tools/call`, to stamp records for tools with `labelInto`.
-- `adtl.policy` returns "ask" with a `confirmation` request (`id`, `reason`, `callHash`, `expiresAt`, `token`), as proposed in experimental-ext-interceptors#45, and accepts `context.confirmations` when invoked again. Each confirmation allows one call, in one session, before it expires. `info["adtl/decision"]` is still set.
-- `callHash` now covers the SEP-2624 call binding `{ event, phase, target, payload }`, so audit log hashes differ from 0.4.0.
+- `adtl.policy` returns "ask" with a `confirmation` request (`id`, `reason`, `callHash`, `expiresAt`, `token`), as proposed in [experimental-ext-interceptors#45](https://github.com/modelcontextprotocol/experimental-ext-interceptors/pull/45), and accepts `context.confirmations` when invoked again. Each confirmation allows one call, in one session, before it expires. A confirmation never turns a block into an allow. `info["adtl/decision"]` is still set.
+- `adtl.label` stamps records for tools with `labelInto`, and joins the stamps it finds for tools with `readLabels`.
 
 ### `@adtl/ledger`
 - `declassify()` takes a subject (e.g. the file name), kept with the reason. `declassifications()` lists recent declassifications.
 
 ### `@adtl/gateway`
-- `Authorizer` interface: decides whether the caller may use a tool, resource or prompt at all, before the policy runs. A denial wins over any policy decision; failures deny; audit mode only logs. Pass it as `new AdtlGateway({ authorizer, principal })`; denials are audited as `denied: { by, reason }`. No config support yet.
+- `Authorizer` interface: decides whether the caller may use a tool, resource or prompt at all, before the policy runs. A denial wins over any policy decision; failures deny; audit mode only logs. Pass it as `new AdtlGateway({ authorizer, principal })`; denials are audited as `denied: { by, reason }`. No config support yet ([#8](https://github.com/probita-ai/adtl/issues/8)).
+- After a human approves a call, the gateway checks it again with the confirmation and runs it only if every validator allows it and the call still matches the approved hash. The confirmation token never reaches the agent.
+- Sets `context.target` to the upstream server, and `context.principal` to the configured principal, on every interceptor invocation.
 - The audit log is hash-chained: each line carries `prev` and `hash`. `adtl-gateway audit verify` detects edited, removed, reordered and inserted lines and prints the last hash. The gateway and the Claude Code hook append through a lock file so the chain doesn't fork. Logs from 0.4 are continued, with their lines reported as written before the chain.
 - The Claude Code hook guards the audit log like the ledger: `Write`/`Edit` on it are blocked, shell commands that mention it ask first.
-- `ledger declassify` requires `--reason`. New `ledger declassified` lists recent declassifications: when, who, which file, why.
+- `ledger declassify` records the file with the reason. New `ledger declassified` lists recent declassifications: when, who, which file, why.
 - Audit entries get `records: { stamps, writers }` when a result carried record stamps.
-- The README shows the architecture sketch on npm too.
-- Sets `context.target` to the upstream server on every interceptor invocation.
-- After a human approves a call, checks it again with the confirmation and runs it only if every validator allows it and the call still matches the approved hash.
-- `ChainOutcome` is now `PhaseOutcome`, since SEP-2624 no longer talks about chains.
+- The npm README shows the architecture sketch.
+
+### Examples and docs
+- `examples/fake-memory`: a memory server that extracts facts on write, keeps per-item metadata and consolidates records, used in the tests.
+- The README has a diagram of a label following content through a memory server.
 
 ## 0.4.0 — experimental
 

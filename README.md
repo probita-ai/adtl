@@ -75,12 +75,13 @@ v0.3.2 adds `adtl-gateway init --from .mcp.json`: import the MCP servers you alr
 
 v0.4 adds the label ledger: content written by a session that had read untrusted or private data keeps that label when it is read back, in a later session or another tool. It stops delayed injections, written on Monday and triggered on Tuesday ([demo](examples/delayed-injection-demo)).
 
+v0.5 carries labels through memory servers that rewrite what they store ([labels on records](packages/gateway#labels-on-records)), makes the audit log tamper-evident (`adtl-gateway audit verify`), requires a reason to declassify, follows the [confirmation proposal](https://github.com/modelcontextprotocol/experimental-ext-interceptors/pull/45) for SEP-2624 "ask" decisions, and adds an [`Authorizer`](packages/gateway#authorization) interface: who may use a tool at all, checked before the policy.
+
 Planned next:
 
-- **Rest of v0.3:** a demo against the real GitHub MCP server
-- **v0.4.x:** signed session receipts: a tamper-evident record of every call in a session
-- **v0.5:** labels carried across sub-agents and A2A, plus interop with FIDES
-- **Later:** authorization (RBAC / ABAC): who may call a tool and who may approve, using existing engines such as Cedar and OpenFGA
+- **v0.5.x:** role-based authorization in the config, and who may approve an "ask"
+- **v0.6:** labels carried across sub-agents and A2A, signed session receipts, and interop with FIDES
+- **Later:** adapters for existing authorization engines such as Cedar and OpenFGA, and a demo against the real GitHub MCP server
 
 Help is very welcome: see the [open issues](https://github.com/probita-ai/adtl/issues), especially the ones marked [help wanted](https://github.com/probita-ai/adtl/labels/help%20wanted).
 
