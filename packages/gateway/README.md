@@ -59,6 +59,8 @@ One file holds both the labels and the gateway settings.
 | `integrity` | `trusted`, `untrusted` | Can the tool's *result* be trusted to influence actions? Content from strangers (issues, emails, web pages) is untrusted. |
 | `confidentiality` | `public`, `private`, `secret` | Who may see the tool's *result*? |
 | `egress` | `none`, `internal`, `external`, `public` | Where *calling* the tool can send data. |
+| `labelInto` | an argument name, e.g. `metadata` | Write tools of servers that store an object per record: stamp the session label into it. See [labels on records](#labels-on-records). |
+| `readLabels` | `true` | Read tools of those servers: join the stamps found on returned records into the result's label. |
 
 Tools without a rule use the defaults (`untrusted`, `private`, egress `unknown`). That's safe but strict, so describe the tools you use. Resources and prompts use the server's `defaults`.
 
@@ -224,6 +226,22 @@ Matching is by normalized chunks (whole text, paragraphs, lines of 32+ character
 
 See [the delayed-injection demo](../../examples/delayed-injection-demo) (`npm run demo:ledger`).
 
+### Labels on records
+
+Some memory servers extract facts with a model on write, or merge records, so what comes back matches no text the session sent and the ledger can't recognize it. If the server stores a metadata object with each record and returns it on read, let the label travel with the record:
+
+```yaml
+servers:
+  memory:
+    tools:
+      add_memory:    { egress: internal, labelInto: metadata }
+      search_memory: { integrity: trusted, confidentiality: public, egress: none, readLabels: true }
+```
+
+- On every `add_memory` call the gateway sets `metadata["adtl/record-label"]` to `{ integrity, confidentiality, writer }` from the session, replacing anything the agent put there.
+- On `search_memory`, stamps anywhere in the result (also inside JSON text) are joined into its label, with the origin `adtl-record` / `session:<id>`, and the audit entry gets `records: { stamps, writers }`. Anyone who can write to the store can write a stamp, so stamps only make a label stricter. A malformed stamp counts as the global defaults.
+- A server that drops or rewrites metadata (for example when it consolidates records) can't carry the label. Give its read tools a strict rule, such as `integrity: untrusted`, once in the config.
+
 ## How it works
 
 ```
@@ -241,7 +259,7 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 - Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
 - Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
 - Approvals come from one push channel (ntfy). Other channels, approvals inside the MCP client, and approver roles are planned.
-- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.5).
+- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.5). Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
 - The Claude Code hooks label tools by name, not by what they touched: a `Read` of a downloaded file is as trusted as a `Read` of your own code.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.
 
