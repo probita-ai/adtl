@@ -39,14 +39,15 @@ export async function runHook(opts: RunHookOptions): Promise<HookOutcome> {
     const sessionsDir = defaultSessionsDir(env);
     const ledgerPath = config.ledger.path ? resolve(dirname(path), config.ledger.path) : defaultLedgerPath(env);
     const ledger = config.ledger.enabled ? new Ledger(ledgerPath, { retentionDays: config.ledger.retentionDays }) : undefined;
+    const auditPath = typeof gw.audit === "string" ? resolve(dirname(path), gw.audit) : undefined;
     return handleHook(input, {
       config,
       sessions: new FileSessionStore(sessionsDir),
       ...(ledger ? { ledger } : {}),
       ...(opts.gatewayServer ? { gatewayServer: opts.gatewayServer } : {}),
       mode: gw.mode === "audit" ? "audit" : "active",
-      ...(typeof gw.audit === "string" ? { audit: new JsonlAuditLog(resolve(dirname(path), gw.audit)) } : {}),
-      protect: { configPath: path, sessionsDir, ledgerPath },
+      ...(auditPath ? { audit: new JsonlAuditLog(auditPath) } : {}),
+      protect: { configPath: path, sessionsDir, ledgerPath, ...(auditPath ? { auditPath } : {}) },
     });
   } catch (err) {
     return failure(input.hook_event_name, (err as Error).message);

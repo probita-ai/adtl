@@ -8,7 +8,13 @@
 ### `@adtl/interceptors`
 - `adtl.label` also hooks the request phase of `tools/call`, to stamp records for tools with `labelInto`.
 
+### `@adtl/ledger`
+- `declassify()` takes a subject (e.g. the file name), kept with the reason. `declassifications()` lists recent declassifications.
+
 ### `@adtl/gateway`
+- The audit log is hash-chained: each line carries `prev` and `hash`. `adtl-gateway audit verify` detects edited, removed, reordered and inserted lines and prints the last hash. The gateway and the Claude Code hook append through a lock file so the chain doesn't fork. Logs from 0.4 are continued, with their lines reported as written before the chain.
+- The Claude Code hook guards the audit log like the ledger: `Write`/`Edit` on it are blocked, shell commands that mention it ask first.
+- `ledger declassify` requires `--reason`. New `ledger declassified` lists recent declassifications: when, who, which file, why.
 - Audit entries get `records: { stamps, writers }` when a result carried record stamps.
 - The README shows the architecture sketch on npm too.
 

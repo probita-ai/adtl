@@ -111,6 +111,11 @@ describe("adtl-gateway ledger", () => {
     expect((await runLedgerCommand(["declassify", notes, "--reason", "checked by hand"], env)).stdout).toContain("cleared 1 labeled chunk");
     expect(new Ledger(env.ADTL_LEDGER).lookup((await import("@adtl/ledger")).chunkHashes(INJECTION))).toBeUndefined();
     await expect(runLedgerCommand(["declassify"], env)).rejects.toThrow(/at least one file/);
+    await expect(runLedgerCommand(["declassify", notes], env)).rejects.toThrow(/needs --reason/);
+    await expect(runLedgerCommand(["declassify", notes, "--reason", "  "], env)).rejects.toThrow(/needs --reason/);
+    const listed = (await runLedgerCommand(["declassified"], env)).stdout;
+    expect(listed).toMatch(/user:\S+ {2}\S*notes\.md {2}1 chunk {2}checked by hand$/);
+    await expect(runLedgerCommand(["declassified", "--limit", "0"], env)).rejects.toThrow(/--limit/);
     await expect(runLedgerCommand(["nope"], env)).rejects.toThrow(/Unknown ledger command/);
   });
 

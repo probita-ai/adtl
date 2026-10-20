@@ -8,7 +8,7 @@ Session labels end with the session. If an agent reads an untrusted web page and
 
 - **Record.** When a session that has read untrusted or private data sends text anywhere (a file, a memory server, a sub-agent prompt, an issue comment), the text's chunk hashes are stored with that session's label. Clean sessions record nothing.
 - **Look up.** Before a result reaches the agent, its chunk hashes are looked up. Any matching label is joined into the result's label, with an origin naming the session that wrote it.
-- **Declassify.** A person can clear the label of specific content after checking it.
+- **Declassify.** A person can clear the label of specific content after checking it, giving a reason. `declassifications()` lists recent ones, with who, what and why, for review.
 
 Text is normalized (Unicode NFC, lowercase, whitespace collapsed) and hashed whole, per paragraph and per line, skipping pieces under 32 characters. A paragraph copied into a bigger file still matches. Text the agent rewrote is caught too, because it was written by the tainted session. Text a person rewrote by hand is not, and neither is text a server rewrote after it was sent: memory servers that extract facts with a model on write, or merge records, store sentences the session never sent, so they match nothing. For those, the gateway can carry the label on the record instead (`labelInto` / `readLabels`, see the [gateway docs](../gateway#labels-on-records)).
 
