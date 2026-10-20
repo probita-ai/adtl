@@ -48,6 +48,16 @@ export interface LedgerMatch {
   writers: string[];
 }
 
+/** One declassification: everything one person cleared at one time, for one reason. */
+export interface Declassification {
+  ts: string;
+  by: string;
+  reason?: string;
+  /** What was cleared, e.g. a file name. */
+  subject?: string;
+  chunks: number;
+}
+
 export interface VerifyResult {
   ok: boolean;
   entries: number;
@@ -227,14 +237,40 @@ export class Ledger {
     return label ? { label, chunks: matched, writers: [...writers] } : undefined;
   }
 
-  /** Clear the label of content with these chunk hashes. `by` names who did it. Returns the number of chunks cleared. */
-  declassify(chunks: readonly string[], by: string, reason?: string): number {
+  /**
+   * Clear the label of content with these chunk hashes. `by` names who did it,
+   * `subject` what was cleared (e.g. a file name). Returns the number of chunks cleared.
+   */
+  declassify(chunks: readonly string[], by: string, reason?: string, subject?: string): number {
     const live = this.live([...new Set(chunks)]);
     const ts = this.now().toISOString();
+    const why = reason || subject ? JSON.stringify({ ...(reason ? { reason } : {}), ...(subject ? { subject } : {}) }) : null;
     const rows = [...live.entries()]
       .filter(([, rs]) => rs.length > 0)
-      .map(([chunk]) => ({ ts, kind: "clear" as const, chunk, label: null, writer: by, source: reason ? JSON.stringify({ reason }) : null }));
+      .map(([chunk]) => ({ ts, kind: "clear" as const, chunk, label: null, writer: by, source: why }));
     return this.append(rows);
+  }
+
+  /** Recent declassifications, newest first, for review. */
+  declassifications(limit = 20): Declassification[] {
+    const rows = this.db
+      .prepare("SELECT ts, writer, source, COUNT(*) AS chunks FROM entries WHERE kind = 'clear' GROUP BY ts, writer, source ORDER BY ts DESC LIMIT ?")
+      .all(limit) as unknown as { ts: string; writer: string | null; source: string | null; chunks: number }[];
+    return rows.map((r) => {
+      let s: { reason?: unknown; subject?: unknown } = {};
+      try {
+        s = JSON.parse(r.source ?? "{}") as typeof s;
+      } catch {
+        // Unreadable source: list it without a reason.
+      }
+      return {
+        ts: r.ts,
+        by: r.writer ?? "unknown",
+        ...(typeof s.reason === "string" ? { reason: s.reason } : {}),
+        ...(typeof s.subject === "string" ? { subject: s.subject } : {}),
+        chunks: r.chunks,
+      };
+    });
   }
 
   /** Check every entry's hash and its link to the one before. */

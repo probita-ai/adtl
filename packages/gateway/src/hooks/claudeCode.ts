@@ -24,7 +24,7 @@
  *
  * Errors fail closed: a PreToolUse hook that can't decide denies the call.
  */
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   callHash,
   evaluatePolicy,
@@ -62,7 +62,7 @@ export interface HookOptions {
   /** Label ledger shared with the gateway. */
   ledger?: Ledger;
   /** Files the agent must not change: the ADTL config, the session directory and the ledger. */
-  protect?: { configPath?: string; sessionsDir?: string; ledgerPath?: string };
+  protect?: { configPath?: string; sessionsDir?: string; ledgerPath?: string; auditPath?: string };
 }
 
 /** What the hook process prints and exits with. */
@@ -128,6 +128,10 @@ function protectedTarget(input: HookInput, route: { server: string; tool: string
     if (protect.ledgerPath && abs.startsWith(resolve(protect.ledgerPath))) {
       return { decision: "block", reason: "The agent may not change the ADTL ledger" };
     }
+    // Prefix match also covers the .lock file.
+    if (protect.auditPath && abs.startsWith(resolve(protect.auditPath))) {
+      return { decision: "block", reason: "The agent may not change the ADTL audit log" };
+    }
   }
   const command = typeof args.command === "string" ? args.command : undefined;
   if (command !== undefined && ["Bash", "Monitor"].includes(route.tool)) {
@@ -138,6 +142,9 @@ function protectedTarget(input: HookInput, route: { server: string; tool: string
     const ledgerMarks = ["ledger.db", "ledger declassify", protect.ledgerPath].filter((m): m is string => !!m);
     if (ledgerMarks.some((m) => command.includes(m))) {
       return { decision: "ask", reason: "This command touches the ADTL ledger" };
+    }
+    if (protect.auditPath && command.includes(basename(protect.auditPath))) {
+      return { decision: "ask", reason: "This command touches the ADTL audit log" };
     }
   }
   return undefined;
