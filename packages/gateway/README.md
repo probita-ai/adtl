@@ -61,6 +61,7 @@ One file holds both the labels and the gateway settings.
 | `egress` | `none`, `internal`, `external`, `public` | Where *calling* the tool can send data. |
 | `labelInto` | an argument name, e.g. `metadata` | Write tools of servers that store an object per record: stamp the session label into it. See [labels on records](#labels-on-records). |
 | `readLabels` | `true` | Read tools of those servers: join the stamps found on returned records into the result's label. |
+| `scopeInto` | a scope-id argument, e.g. `run_id` | Write tools of servers that resolve references from earlier messages of the same scope (such as Mem0): give a tainted session's writes a scope of their own. |
 
 Tools without a rule use the defaults (`untrusted`, `private`, egress `unknown`). That's safe but strict, so describe the tools you use. Resources and prompts use the server's `defaults`.
 
@@ -248,13 +249,16 @@ Some memory servers extract facts with a model on write, or merge records, so wh
 servers:
   memory:
     tools:
-      add_memory:    { egress: internal, labelInto: metadata }
+      add_memory:    { egress: internal, labelInto: metadata, scopeInto: run_id }
+      update_memory: { egress: internal, labelInto: metadata }
       search_memory: { integrity: trusted, confidentiality: public, egress: none, readLabels: true }
 ```
 
-- On every `add_memory` call the gateway sets `metadata["adtl/record-label"]` to `{ integrity, confidentiality, writer }` from the session, replacing anything the agent put there.
-- On `search_memory`, stamps anywhere in the result (also inside JSON text) are joined into its label, with the origin `adtl-record` / `session:<id>`, and the audit entry gets `records: { stamps, writers }`. Anyone who can write to the store can write a stamp, so stamps only make a label stricter. A malformed stamp counts as the global defaults.
-- A server that drops or rewrites metadata (for example when it consolidates records) can't carry the label. Give its read tools a strict rule, such as `integrity: untrusted`, once in the config.
+- **Write.** On every `add_memory` and `update_memory` call the gateway sets `metadata["adtl/record-label/<session>"]` to `{ integrity, confidentiality, writer }` from the session, and drops any stamp keys the agent put there. Each session stamps under its own key, so on a server that lays an update's metadata over the stored metadata (as Mem0 does), a clean session's update adds a stamp instead of replacing a tainted one.
+- **Read.** On `search_memory`, stamps anywhere in the result (also inside JSON text) are joined into its label, with the origin `adtl-record` / `session:<id>`, and the audit entry gets `records: { stamps, writers }`. Anyone who can write to the store can write a stamp, so stamps only make a label stricter. A malformed stamp counts as the global defaults.
+- **Scope.** Some servers also keep recent raw messages per scope, without metadata, and resolve references in a new message from them: Mem0 keeps the last 10 per `user_id`/`agent_id`/`run_id` and asks its extractor to resolve pronouns from them. A clean session writing under a tainted session's ids could then store a fact built from the tainted text, with a clean stamp. With `scopeInto: run_id`, a tainted session's writes get a run id named after its label (`<run_id>:adtl-untrusted-public`, or just `adtl-untrusted-public`), so the server keeps its messages apart. Clean sessions keep their ids, minus any label mark the agent added, so they can't join a tainted scope. Mem0 filters searches by the ids a call sets: a read that names the agent's own `run_id` doesn't see the tainted session's records, and one by `user_id` alone sees them all, with their stamps.
+- **Tools that return text without metadata** can't carry the label, and the ledger can't recognize extracted text. Give them a strict rule, such as `integrity: untrusted`. In Mem0 that is `history()`, and on Mem0's hosted MCP server `list_events` and `get_event_status`.
+- **Servers that drop or replace metadata** (when they consolidate records, or an update overwrites the metadata instead of merging it) can't carry the label either. Give their read tools a strict rule.
 
 ## How it works
 

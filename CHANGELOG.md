@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### `@adtl/labels`
+- Record stamps are written under a key per session, `adtl/record-label/<session>`, and stamp keys the agent supplies are dropped. On servers that lay an update's metadata over the stored metadata (Mem0), a clean session's update no longer replaces a tainted stamp. Stamps written by 0.5.0 under the single `adtl/record-label` key are still read.
+- Tool rule `scopeInto` (e.g. `run_id`): a tainted session's writes get a scope id named after its label, so servers that resolve references from recent messages of the same scope (Mem0) don't build a clean session's facts from a tainted session's text. Clean sessions can't name a tainted scope. `scopeRecord()`.
+
+### `@adtl/interceptors`
+- `adtl.label` applies `scopeInto` on the request phase of `tools/call`, alongside `labelInto`.
+
+### `@adtl/gateway`
+- Docs: which Mem0 paths carry record labels and which need a strict rule (`history()`, and `list_events` / `get_event_status` on Mem0's hosted MCP server).
+
+### Examples
+- `examples/fake-memory` keeps Mem0's 10-message buffer per scope, resolves "the same place as before" from it, and has `get_memory` and `update_memory` (metadata overlaid).
+
 ## 0.5.0 — experimental
 
 Labels now survive memory servers that rewrite what they store, the audit log is tamper-evident, "ask" follows the confirmation proposal for SEP-2624, and the gateway can check who may use a tool before the policy runs.

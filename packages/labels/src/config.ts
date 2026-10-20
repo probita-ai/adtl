@@ -45,6 +45,8 @@ export const ToolRuleSchema = z
     labelInto: z.string().min(1).optional(),
     /** Read tools: join labels stamped on the records in the result (stricter only). */
     readLabels: z.boolean().optional(),
+    /** Write tools: scope-id argument (e.g. `run_id`) that keeps a tainted session's writes in a scope of their own. */
+    scopeInto: z.string().min(1).optional(),
   })
   .strict();
 export type ToolRule = z.infer<typeof ToolRuleSchema>;
