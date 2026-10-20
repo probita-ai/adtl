@@ -1,6 +1,7 @@
 export * from "./config.js";
 export * from "./invoker.js";
 export * from "./audit.js";
+export * from "./authorizer.js";
 export * from "./approvals.js";
 export * from "./ntfy.js";
 export * from "./email.js";

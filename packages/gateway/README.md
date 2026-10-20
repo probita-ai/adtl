@@ -266,6 +266,29 @@ agent ──▶ adtl-gateway ──▶ upstream MCP servers
                     adtl.label   labels the result after it returns
 ```
 
+### Authorization
+
+Labels and the policy decide whether a call may run given what the session has seen. An `Authorizer` decides before that whether the caller may use the tool, resource or prompt at all. It is a library interface for now; role-based rules in the config are planned ([#8](https://github.com/probita-ai/adtl/issues/8)).
+
+```ts
+import { AdtlGateway, type Authorizer } from "@adtl/gateway";
+
+const readOnly: Authorizer = {
+  name: "read-only",
+  check: ({ principal, server, tool }) =>
+    tool?.startsWith("get_") || tool?.startsWith("read_")
+      ? { allow: true }
+      : { allow: false, reason: `${principal.id ?? "anonymous"} may only read from ${server}` },
+};
+
+new AdtlGateway({ upstreams, invoker, authorizer: readOnly, principal: { type: "user", id: "alice" } });
+```
+
+- It runs on every `tools/call`, `resources/read` and `prompts/get`, before the interceptors. A denial stops the call whatever the policy says; an allow still leaves the call to the policy.
+- It gets `{ principal, event, server, tool | resource | prompt, arguments }`. The principal is also passed to the interceptors as SEP-2624 `context.principal`. Over stdio it is whoever started the gateway (anonymous unless set).
+- Denials are audited with `denied: { by, reason }`. An authorizer that throws denies the call. In audit mode denials are logged and the call still runs.
+- The Claude Code hooks don't use it yet.
+
 The gateway fails closed. If an interceptor errors or times out, the call is stopped. If a result can't be labeled, it is withheld. If the interceptors are missing, the gateway refuses to start. (In audit mode such failures are logged as warnings instead.)
 
 ## Limits of this version
