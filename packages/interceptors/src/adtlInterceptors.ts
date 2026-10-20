@@ -11,7 +11,9 @@
  *
  * For tools whose rule sets `labelInto`, `adtl.label` also runs on the request
  * phase and stamps the session label into that argument, so the label travels
- * with the stored record. Results of tools with `readLabels` are joined with
+ * with the stored record. With `scopeInto`, a tainted session's writes get a
+ * scope id of their own, so servers that resolve references from earlier
+ * messages of the same scope don't mix its text into clean sessions' records. Results of tools with `readLabels` are joined with
  * the stamps they carry (stricter only). See @adtl/labels recordLabel.
  *
  * With a ledger, `adtl.label` also re-labels content that a tainted session
@@ -47,6 +49,7 @@ import {
   evaluatePolicy,
   labelResult,
   readRecordLabels,
+  scopeRecord,
   stampRecordLabel,
   toolEgress,
   type AdtlConfig,
@@ -231,31 +234,41 @@ export class AdtlInterceptors {
     return result;
   }
 
-  /** Request phase: stamp the session label into the argument named by the tool's `labelInto`. */
+  /**
+   * Request phase: stamp the session label into the argument named by the
+   * tool's `labelInto`, and scope a tainted session's write by `scopeInto`.
+   */
   private stamp(params: InvocationParams, config: InvocationConfig): MutationResult {
     const payload = isRecord(params.payload) ? params.payload : {};
     const wrapped = isRecord(payload.params);
     const rpcParams = wrapped ? (payload.params as Record<string, unknown>) : payload;
     const tool = typeof rpcParams.name === "string" ? rpcParams.name : config.tool;
-    const field = tool === undefined ? undefined : this.config.servers[config.server]?.tools[tool]?.labelInto;
+    const rule = tool === undefined ? undefined : this.config.servers[config.server]?.tools[tool];
+    const field = rule?.labelInto;
+    const scopeField = rule?.scopeInto;
     const unchanged: MutationResult = { interceptor: LABEL_INTERCEPTOR, type: "mutation", phase: params.phase, modified: false, payload: params.payload };
-    if (field === undefined) return unchanged;
+    if (field === undefined && scopeField === undefined) return unchanged;
 
     const sessionId = params.context?.sessionId;
-    if (!sessionId) return { ...unchanged, info: { warning: "No context.sessionId: the record was not stamped" } };
-    const args = isRecord(rpcParams.arguments) ? rpcParams.arguments : {};
-    let stamped: Record<string, unknown>;
+    if (!sessionId) return { ...unchanged, info: { warning: "No context.sessionId: the record was not stamped or scoped" } };
+    const label = this.sessions.get(sessionId);
+    let args = isRecord(rpcParams.arguments) ? rpcParams.arguments : {};
     try {
-      stamped = stampRecordLabel(args, field, this.sessions.get(sessionId), sessionId);
+      if (field !== undefined) args = stampRecordLabel(args, field, label, sessionId);
+      if (scopeField !== undefined) args = scopeRecord(args, scopeField, label);
     } catch (err) {
       throw new InterceptorError(ErrorCodes.InvalidParams, `${LABEL_INTERCEPTOR}: ${(err as Error).message}`, { interceptor: LABEL_INTERCEPTOR });
     }
-    const next = { ...rpcParams, arguments: stamped };
+    if (args === rpcParams.arguments) return unchanged;
+    const next = { ...rpcParams, arguments: args };
     return {
       ...unchanged,
       modified: true,
       payload: wrapped ? { ...payload, params: next } : next,
-      info: { stamped: field },
+      info: {
+        ...(field !== undefined ? { stamped: field } : {}),
+        ...(scopeField !== undefined && args[scopeField] !== undefined ? { scope: args[scopeField] } : {}),
+      },
     };
   }
 
