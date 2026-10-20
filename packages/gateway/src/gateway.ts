@@ -393,7 +393,8 @@ export class AdtlGateway {
       throw new McpError(ErrorCode.InternalError, `ADTL could not label this content, so it was withheld: ${res.blocked.reason}`);
     }
     const label = infoOf(res, "adtl.label");
-    finish({ outcome: "forwarded", ...audit, label: label.label, ...(label.ledger ? { ledger: label.ledger } : {}), sessionLabel: label.sessionLabel, warnings });
+    finish({ outcome: "forwarded", ...audit, label: label.label, ...(label.ledger ? { ledger: label.ledger } : {}),
+      ...(label.records ? { records: label.records } : {}), sessionLabel: label.sessionLabel, warnings });
     return (res.payload as { result: R }).result;
   }
 
@@ -523,6 +524,7 @@ export class AdtlGateway {
       callHash: policy.callHash,
       label: label.label,
       ...(label.ledger ? { ledger: label.ledger } : {}),
+      ...(label.records ? { records: label.records } : {}),
       sessionLabel: label.sessionLabel,
       warnings: [...req.warnings, ...res.warnings],
     });

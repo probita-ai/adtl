@@ -41,6 +41,10 @@ export const ToolRuleSchema = z
     confidentiality: confidentiality.optional(),
     /** Where this tool can send data when called. */
     egress: egress.optional(),
+    /** Write tools: argument (an object the server stores with each record, e.g. `metadata`) to stamp the session label into. */
+    labelInto: z.string().min(1).optional(),
+    /** Read tools: join labels stamped on the records in the result (stricter only). */
+    readLabels: z.boolean().optional(),
   })
   .strict();
 export type ToolRule = z.infer<typeof ToolRuleSchema>;

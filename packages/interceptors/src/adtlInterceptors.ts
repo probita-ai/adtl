@@ -1,12 +1,18 @@
 /**
  * ADTL's two interceptors, independent of any transport:
  *
- * - `adtl.label` (mutation, response phase of tools/call, resources/read and prompts/get):
+ * - `adtl.label` (mutation, response phase of tools/call, resources/read and prompts/get;
+ *   request phase of tools/call for record stamps):
  *   labels the result, attaches the label under `_meta`, and records it in
  *   the session.
  * - `adtl.policy` (validation, request phase of tools/call): checks the call
  *   against the session's accumulated label and the policy, returning
  *   allow / ask / block.
+ *
+ * For tools whose rule sets `labelInto`, `adtl.label` also runs on the request
+ * phase and stamps the session label into that argument, so the label travels
+ * with the stored record. Results of tools with `readLabels` are joined with
+ * the stamps they carry (stricter only). See @adtl/labels recordLabel.
  *
  * With a ledger, `adtl.label` also re-labels content that a tainted session
  * wrote earlier (looked up by content hash), and records the text of the
@@ -40,6 +46,8 @@ import {
   callBindingHash,
   evaluatePolicy,
   labelResult,
+  readRecordLabels,
+  stampRecordLabel,
   toolEgress,
   type AdtlConfig,
   type Decision,
@@ -99,10 +107,13 @@ const DEFINITIONS: InterceptorDefinition[] = [
     version: VERSION,
     description: "Labels tool, resource and prompt results with ADTL trust labels (MCP trust-annotations) and records them per session",
     type: "mutation",
-    hooks: [{ events: ["tools/call", "resources/read", "prompts/get"], phase: "response" }],
+    hooks: [
+      { events: ["tools/call", "resources/read", "prompts/get"], phase: "response" },
+      { events: ["tools/call"], phase: "request" },
+    ],
     failOpen: false,
-    // Run after other response mutators (e.g. redaction) so the label describes the final content.
-    priorityHint: { response: 1000 },
+    // Run after other mutators: the label describes the final content, and no later mutator can drop the stamp.
+    priorityHint: { request: 1000, response: 1000 },
     configSchema: CONFIG_SCHEMA,
   },
   {
@@ -211,11 +222,41 @@ export class AdtlInterceptors {
 
     const started = this.now();
     const result =
-      def.name === LABEL_INTERCEPTOR
-        ? this.label(params, parsed.data)
-        : this.policy(params, parsed.data);
+      def.name === POLICY_INTERCEPTOR
+        ? this.policy(params, parsed.data)
+        : params.phase === "request"
+          ? this.stamp(params, parsed.data)
+          : this.label(params, parsed.data);
     result.durationMs = Math.max(0, Math.round((this.now() - started) * 1000) / 1000);
     return result;
+  }
+
+  /** Request phase: stamp the session label into the argument named by the tool's `labelInto`. */
+  private stamp(params: InvocationParams, config: InvocationConfig): MutationResult {
+    const payload = isRecord(params.payload) ? params.payload : {};
+    const wrapped = isRecord(payload.params);
+    const rpcParams = wrapped ? (payload.params as Record<string, unknown>) : payload;
+    const tool = typeof rpcParams.name === "string" ? rpcParams.name : config.tool;
+    const field = tool === undefined ? undefined : this.config.servers[config.server]?.tools[tool]?.labelInto;
+    const unchanged: MutationResult = { interceptor: LABEL_INTERCEPTOR, type: "mutation", phase: params.phase, modified: false, payload: params.payload };
+    if (field === undefined) return unchanged;
+
+    const sessionId = params.context?.sessionId;
+    if (!sessionId) return { ...unchanged, info: { warning: "No context.sessionId: the record was not stamped" } };
+    const args = isRecord(rpcParams.arguments) ? rpcParams.arguments : {};
+    let stamped: Record<string, unknown>;
+    try {
+      stamped = stampRecordLabel(args, field, this.sessions.get(sessionId), sessionId);
+    } catch (err) {
+      throw new InterceptorError(ErrorCodes.InvalidParams, `${LABEL_INTERCEPTOR}: ${(err as Error).message}`, { interceptor: LABEL_INTERCEPTOR });
+    }
+    const next = { ...rpcParams, arguments: stamped };
+    return {
+      ...unchanged,
+      modified: true,
+      payload: wrapped ? { ...payload, params: next } : next,
+      info: { stamped: field },
+    };
   }
 
   private label(params: InvocationParams, config: InvocationConfig): MutationResult {
@@ -263,6 +304,14 @@ export class AdtlInterceptors {
     );
 
     const info: Record<string, unknown> = {};
+    const server = this.config.servers[config.server];
+    if (tool !== undefined && (server?.tools[tool]?.readLabels ?? server?.defaults?.readLabels)) {
+      const carried = readRecordLabels(result, this.config.defaults);
+      if (carried) {
+        label = join(label, carried.label);
+        info.records = { stamps: carried.records, writers: carried.writers };
+      }
+    }
     if (this.ledger) {
       const match = this.ledger.lookup(valueHashes(result));
       if (match) {
