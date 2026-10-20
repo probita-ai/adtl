@@ -12,6 +12,7 @@
 - `declassify()` takes a subject (e.g. the file name), kept with the reason. `declassifications()` lists recent declassifications.
 
 ### `@adtl/gateway`
+- `Authorizer` interface: decides whether the caller may use a tool, resource or prompt at all, before the policy runs. A denial wins over any policy decision; failures deny; audit mode only logs. Pass it as `new AdtlGateway({ authorizer, principal })`; denials are audited as `denied: { by, reason }`. No config support yet.
 - The audit log is hash-chained: each line carries `prev` and `hash`. `adtl-gateway audit verify` detects edited, removed, reordered and inserted lines and prints the last hash. The gateway and the Claude Code hook append through a lock file so the chain doesn't fork. Logs from 0.4 are continued, with their lines reported as written before the chain.
 - The Claude Code hook guards the audit log like the ledger: `Write`/`Edit` on it are blocked, shell commands that mention it ask first.
 - `ledger declassify` requires `--reason`. New `ledger declassified` lists recent declassifications: when, who, which file, why.

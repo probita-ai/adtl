@@ -36,6 +36,8 @@ export interface AuditEntry {
   decision?: string;
   /** Present when the gateway ran in audit mode: nothing was stopped or changed. */
   mode?: "audit";
+  /** Present when the authorizer denied the caller: which one, and why. In audit mode the call still ran. */
+  denied?: { by: string; reason: string };
   /** Present when a human was asked: outcome, channel, approver (if known) and wait time. */
   approval?: { outcome: string; channel?: string; approver?: string; waitedMs: number };
   reason?: string;
