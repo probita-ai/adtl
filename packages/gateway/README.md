@@ -110,11 +110,21 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 | Key | Meaning |
 |---|---|
 | `gateway.upstreams.<id>` | A stdio server (`command`, `args`, `env`, `cwd`) or an HTTP server (`url`, `headers`). The `<id>` must match the key under `servers:`. |
-| `gateway.audit` | Path of a JSONL audit log, relative to the config file |
+| `gateway.audit` | Path of a JSONL audit log, relative to the config file. Hash-chained; see [Checking the audit log](#checking-the-audit-log). |
 | `gateway.mode` | `active` (default) or `audit`. See [Trying a policy safely](#trying-a-policy-safely). |
 | `gateway.approvals` | Ask a human about `ask` decisions. See [Approvals](#approvals). |
 | `gateway.interceptorTimeoutMs` | Timeout per interceptor call (default 5000) |
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
+
+#### Checking the audit log
+
+Each line carries `prev`, the hash of the line before, and `hash`, over the line itself. Check the chain with:
+
+```sh
+adtl-gateway audit verify -c adtl.yaml      # or: adtl-gateway audit verify ./adtl-audit.jsonl
+```
+
+It exits 1 if a line was edited, removed, reordered or inserted, and prints the hash of the last line. Cutting lines off the end is not detected, so note that hash somewhere else if you need to check later. Lines written by 0.4 or earlier are reported as written before the chain. The gateway and the Claude Code hook append through a lock file (`<log>.lock`), so their lines stay in one chain. The hook blocks `Write`/`Edit` on the log and asks before shell commands that mention it. The chain has no secret: an agent with shell access could still rewrite the whole file consistently. Signed session receipts are planned for that ([#26](https://github.com/probita-ai/adtl/issues/26)).
 
 `${VAR}` in commands, args, env, URLs and headers is read from the environment, so secrets stay out of the file.
 
@@ -219,8 +229,12 @@ Look after it with:
 ```sh
 adtl-gateway ledger stats
 adtl-gateway ledger verify                  # exit 1 if an entry was changed or removed
-adtl-gateway ledger declassify notes.md     # after checking it: clear the label of its current content
+adtl-gateway ledger declassify notes.md --reason "checked by hand, no instructions"
+                                            # after checking it: clear the label of its current content
+adtl-gateway ledger declassified            # recent declassifications: when, who, what and why
 ```
+
+`--reason` is required. Declassifying is where taint tracking tends to erode, as it turns into a reflex, so each one is kept with who did it, the file and the reason, for review with `declassified`.
 
 Matching is by normalized chunks (whole text, paragraphs, lines of 32+ characters), so text copied into a bigger file still matches, and text the agent rewrote was already recorded with its session's label. Text a person rewrites by hand, binary files, and content an MCP server returns in another encoding (such as base64) are not matched. The Claude Code hook blocks `Write`/`Edit` on the ledger file and asks before shell commands that mention it or `ledger declassify`. Entries are hash-chained, not signed: an agent with shell access could still rebuild the file, which `verify` cannot detect. Signed entries are planned with labels that travel between agents (v0.5).
 
@@ -251,6 +265,29 @@ agent ──▶ adtl-gateway ──▶ upstream MCP servers
                     adtl.policy  checks the call before it runs
                     adtl.label   labels the result after it returns
 ```
+
+### Authorization
+
+Labels and the policy decide whether a call may run given what the session has seen. An `Authorizer` decides before that whether the caller may use the tool, resource or prompt at all. It is a library interface for now; role-based rules in the config are planned ([#8](https://github.com/probita-ai/adtl/issues/8)).
+
+```ts
+import { AdtlGateway, type Authorizer } from "@adtl/gateway";
+
+const readOnly: Authorizer = {
+  name: "read-only",
+  check: ({ principal, server, tool }) =>
+    tool?.startsWith("get_") || tool?.startsWith("read_")
+      ? { allow: true }
+      : { allow: false, reason: `${principal.id ?? "anonymous"} may only read from ${server}` },
+};
+
+new AdtlGateway({ upstreams, invoker, authorizer: readOnly, principal: { type: "user", id: "alice" } });
+```
+
+- It runs on every `tools/call`, `resources/read` and `prompts/get`, before the interceptors. A denial stops the call whatever the policy says; an allow still leaves the call to the policy.
+- It gets `{ principal, event, server, tool | resource | prompt, arguments }`. The principal is also passed to the interceptors as SEP-2624 `context.principal`. Over stdio it is whoever started the gateway (anonymous unless set).
+- Denials are audited with `denied: { by, reason }`. An authorizer that throws denies the call. In audit mode denials are logged and the call still runs.
+- The Claude Code hooks don't use it yet.
 
 The gateway fails closed. If an interceptor errors or times out, the call is stopped. If a result can't be labeled, it is withheld. If the interceptors are missing, the gateway refuses to start. (In audit mode such failures are logged as warnings instead.)
 

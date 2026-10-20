@@ -21,6 +21,9 @@
  * unanswered or undeliverable calls are stopped. Without an approval channel,
  * "ask" blocks.
  *
+ * An optional Authorizer decides first whether the caller may use the tool,
+ * resource or prompt at all; a denial stops the call before the policy runs.
+ *
  * In audit mode (the invoker runs every interceptor with `mode: "audit"`)
  * nothing is stopped or changed: calls the policy would stop are forwarded,
  * and the audit log records what would have happened.
@@ -52,6 +55,7 @@ import type { InvocationContext } from "@adtl/interceptors";
 import { callBindingHash } from "@adtl/labels";
 import type { ApprovalBroker, ApprovalResult } from "./approvals.js";
 import type { AuditEntry, AuditSink } from "./audit.js";
+import { authorize, type AuthorizationRequest, type Authorizer, type Denial, type Principal } from "./authorizer.js";
 import { TOOL_SEPARATOR } from "./config.js";
 import type { Blocked, PhaseOutcome, InterceptorInvoker } from "./invoker.js";
 
@@ -100,6 +104,10 @@ export interface AdtlGatewayOptions {
   logger?: GatewayLogger;
   /** Asks humans about "ask" decisions and sends notices. */
   approvals?: ApprovalBroker;
+  /** Decides whether the caller may use a tool, resource or prompt at all, before the policy. */
+  authorizer?: Authorizer;
+  /** The caller, passed to the authorizer and the interceptors. Default: anonymous. */
+  principal?: Principal;
 }
 
 export interface CallOptions {
@@ -147,6 +155,8 @@ export class AdtlGateway {
   private readonly audit: AuditSink | undefined;
   private readonly log: GatewayLogger;
   private readonly approvals: ApprovalBroker | undefined;
+  private readonly authorizer: Authorizer | undefined;
+  private readonly principal: Principal;
   private routes = new Map<string, Route>();
   private promptRoutes = new Map<string, PromptRoute>();
   /** Resource URI → the upstreams that list it. */
@@ -160,6 +170,13 @@ export class AdtlGateway {
     this.audit = opts.audit;
     this.log = opts.logger ?? stderrLogger;
     this.approvals = opts.approvals;
+    this.authorizer = opts.authorizer;
+    this.principal = opts.principal ?? { type: "anonymous" };
+  }
+
+  /** Ask the authorizer, if any. Returns the denial; in audit mode the caller logs it and carries on. */
+  private async authorize(request: Omit<AuthorizationRequest, "principal">): Promise<Denial | undefined> {
+    return this.authorizer ? authorize(this.authorizer, { principal: this.principal, ...request }) : undefined;
   }
 
   /** The downstream MCP server the agent connects to. */
@@ -351,11 +368,12 @@ export class AdtlGateway {
     const context: InvocationContext = {
       sessionId: this.sessionId,
       timestamp: new Date().toISOString(),
-      principal: { type: "anonymous" },
+      principal: this.principal,
       target: upstream,
     };
     const config = { server: upstream };
     const audit = this.invoker.modeOverride === "audit" ? { mode: "audit" as const } : {};
+    let denied: Denial | undefined;
     const finish = (entry: Pick<AuditEntry, "outcome"> & Partial<AuditEntry>) =>
       this.audit?.write({
         ts: context.timestamp!,
@@ -363,10 +381,24 @@ export class AdtlGateway {
         event,
         server: upstream,
         ...target,
+        ...(denied ? { denied } : {}),
         ...entry,
         durationMs: Math.round(performance.now() - started),
       });
     const what = "resource" in target ? `resource ${target.resource}` : `prompt ${upstream}${TOOL_SEPARATOR}${target.prompt}`;
+
+    denied = await this.authorize({
+      event,
+      server: upstream,
+      ...target,
+      ...(params.arguments ? { arguments: params.arguments as Record<string, unknown> } : {}),
+    });
+    if (denied && !("mode" in audit)) {
+      finish({ outcome: "blocked", decision: "block", reason: denied.reason });
+      this.log.info(`denied ${what}: ${denied.reason}`);
+      throw new McpError(ErrorCode.InvalidRequest, `ADTL blocked this request: ${denied.reason}`);
+    }
+    if (denied) this.log.info(`audit: would deny ${what}: ${denied.reason}`);
 
     const req = await this.invoker.runRequest({ event, payload: { method: event, params }, config, context });
     if (req.blocked) {
@@ -411,7 +443,7 @@ export class AdtlGateway {
     const context: InvocationContext = {
       sessionId: this.sessionId,
       timestamp: new Date().toISOString(),
-      principal: { type: "anonymous" },
+      principal: this.principal,
       target: route.upstream,
     };
     const config: Record<string, unknown> = {
@@ -419,8 +451,23 @@ export class AdtlGateway {
       ...(route.annotations ? { toolAnnotations: route.annotations } : {}),
     };
     const base = { sessionId: this.sessionId, event: "tools/call" as const, server: route.upstream, tool: route.tool };
+    let denied: Denial | undefined;
     const finish = (entry: Omit<AuditEntry, keyof typeof base | "ts" | "durationMs">) =>
-      this.audit?.write({ ts: context.timestamp!, ...base, ...entry, durationMs: Math.round(performance.now() - started) });
+      this.audit?.write({ ts: context.timestamp!, ...base, ...(denied ? { denied } : {}), ...entry, durationMs: Math.round(performance.now() - started) });
+
+    // 0. Authorization: may this caller use this tool at all? A denial wins over any policy decision.
+    denied = await this.authorize({ event: "tools/call", server: route.upstream, tool: route.tool, arguments: args });
+    if (denied && this.invoker.modeOverride !== "audit") {
+      finish({ outcome: "blocked", decision: "block", reason: denied.reason });
+      this.log.info(`denied ${name}: ${denied.reason}`);
+      this.approvals?.blocked({ sessionId: this.sessionId, server: route.upstream, tool: route.tool, reason: denied.reason, matched: [`authorizer:${denied.by}`] });
+      return textError(`ADTL blocked this call: ${denied.reason}. You are not allowed to use this tool, so the call was not run.`, {
+        decision: "block",
+        reason: denied.reason,
+        authorizer: denied.by,
+      });
+    }
+    if (denied) this.log.info(`audit: would deny ${name}: ${denied.reason}`);
 
     // 1. Request phase: adtl.policy decides whether the call may run.
     const requestPayload = { method: "tools/call", params: { name: route.tool, arguments: args } };

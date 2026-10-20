@@ -1,6 +1,7 @@
 export * from "./config.js";
 export * from "./invoker.js";
 export * from "./audit.js";
+export * from "./authorizer.js";
 export * from "./approvals.js";
 export * from "./ntfy.js";
 export * from "./email.js";
@@ -9,3 +10,4 @@ export * from "./startup.js";
 export * from "./init/index.js";
 export * from "./hooks/index.js";
 export * from "./ledgerCli.js";
+export * from "./auditCli.js";
