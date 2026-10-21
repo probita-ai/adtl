@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 — experimental
+
+Record labels now hold up on memory servers that resolve references from recent messages and overlay updates, such as Mem0 ([#41](https://github.com/probita-ai/adtl/issues/41)). Thanks to Edward Izgorodin for the analysis of Mem0's message buffer.
 
 ### `@adtl/labels`
 - Record stamps are written under a key per session, `adtl/record-label/<session>`, and stamp keys the agent supplies are dropped. On servers that lay an update's metadata over the stored metadata (Mem0), a clean session's update no longer replaces a tainted stamp. Stamps written by 0.5.0 under the single `adtl/record-label` key are still read.

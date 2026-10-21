@@ -77,6 +77,8 @@ v0.4 adds the label ledger: content written by a session that had read untrusted
 
 v0.5 carries labels through memory servers that rewrite what they store ([labels on records](packages/gateway#labels-on-records)), makes the audit log tamper-evident (`adtl-gateway audit verify`), requires a reason to declassify, follows the [confirmation proposal](https://github.com/modelcontextprotocol/experimental-ext-interceptors/pull/45) for SEP-2624 "ask" decisions, and adds an [`Authorizer`](packages/gateway#authorization) interface: who may use a tool at all, checked before the policy.
 
+v0.5.1 keeps record labels through Mem0-style memory servers: `scopeInto` keeps a tainted session's messages out of clean sessions' reference resolution, and each session stamps records under its own key, so an update can't replace a stricter stamp.
+
 Planned next:
 
 - **v0.5.x:** role-based authorization in the config, and who may approve an "ask"
