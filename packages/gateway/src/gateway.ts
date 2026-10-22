@@ -110,6 +110,18 @@ export interface AdtlGatewayOptions {
   authorizer?: Authorizer;
   /** The caller, passed to the authorizer and the interceptors. Default: anonymous. */
   principal?: Principal;
+  /** Members of each role that policy rules name as `approvers:`. */
+  approverRoles?: Map<string, string[]>;
+}
+
+/**
+ * Who may answer an "ask" whose rules name approver roles: someone in one of
+ * the roles of every list. Sorted, for stable notifications and tests.
+ */
+export function eligibleApprovers(lists: string[][], roles: Map<string, string[]>): string[] {
+  const sets = lists.map((list) => new Set(list.flatMap((role) => roles.get(role) ?? [])));
+  const [first, ...rest] = sets;
+  return [...(first ?? [])].filter((id) => id !== "*" && rest.every((s) => s.has(id))).sort();
 }
 
 export interface CallOptions {
@@ -159,6 +171,7 @@ export class AdtlGateway {
   private readonly approvals: ApprovalBroker | undefined;
   private readonly authorizer: Authorizer | undefined;
   private readonly principal: Principal;
+  private readonly approverRoles: Map<string, string[]>;
   private routes = new Map<string, Route>();
   private promptRoutes = new Map<string, PromptRoute>();
   /** Resource URI → the upstreams that list it. */
@@ -174,6 +187,7 @@ export class AdtlGateway {
     this.approvals = opts.approvals;
     this.authorizer = opts.authorizer;
     this.principal = opts.principal ?? { type: "anonymous" };
+    this.approverRoles = opts.approverRoles ?? new Map();
   }
 
   /** Ask the authorizer, if any. Returns the denial; in audit mode the caller logs it and carries on. */
@@ -526,6 +540,8 @@ export class AdtlGateway {
       const stopped = { decision: b.decision, reason: b.reason, matched: policy.matched, callHash: policy.callHash, sessionLabel: policy.sessionLabel };
       const matched = Array.isArray(policy.matched) ? (policy.matched as string[]) : [];
       const hash = b.confirmation?.callHash ?? policy.callHash;
+      const lists = Array.isArray(policy.approvers) ? (policy.approvers as string[][]) : undefined;
+      const approvers = lists ? eligibleApprovers(lists, this.approverRoles) : undefined;
       if (b.decision === "ask" && this.approvals?.canApprove && typeof hash === "string") {
         this.log.info(`ask ${name}: waiting for approval (${b.reason})`);
         approval = await this.waitForApproval(opts, () =>
@@ -537,6 +553,7 @@ export class AdtlGateway {
             reason: b.reason,
             matched,
             ...(policy.sessionLabel !== undefined ? { sessionLabel: policy.sessionLabel } : {}),
+            ...(approvers ? { approvers } : {}),
           }),
         );
         this.log.info(`ask ${name}: ${approval.outcome}`);

@@ -22,6 +22,11 @@ export interface PolicyDecision {
   /** Rules that matched and produced `decision` (empty when the default applied). */
   matched: string[];
   reason: string;
+  /**
+   * For "ask": the approver roles of each winning rule that names some. A
+   * person may answer only if, for every list, they belong to one of its roles.
+   */
+  approvers?: string[][];
 }
 
 const DECISION_RANK: Record<Decision, number> = { allow: 0, ask: 1, block: 2 };
@@ -66,5 +71,6 @@ export function evaluatePolicy(policy: Policy, input: PolicyInput): PolicyDecisi
   const reason = winners
     .map((r) => r.reason ?? `Rule "${r.name}" requires ${decision}`)
     .join("; ");
-  return { decision, matched: winners.map((r) => r.name), reason };
+  const approvers = decision === "ask" ? winners.flatMap((r) => (r.approvers ? [[...r.approvers]] : [])) : [];
+  return { decision, matched: winners.map((r) => r.name), reason, ...(approvers.length ? { approvers } : {}) };
 }

@@ -160,7 +160,34 @@ How it works and what to know:
 - **Nothing sensitive is sent.** Notifications and emails name the tool, the server and the reason, never the call's arguments or results.
 - **Email never contains approve links,** because mail security scanners open links automatically and would approve calls by themselves.
 - **Mind client timeouts.** Many MCP clients give up on a request after 60 seconds, so the default timeout is 50. The gateway sends progress notifications while it waits, which lets clients that reset their timeout on progress wait longer.
-- **Every outcome is logged.** The audit log records `approval: { outcome, channel, waitedMs }` for each call that was asked.
+- **Every outcome is logged.** The audit log records `approval: { outcome, channel, waitedMs }` for each call that was asked, and `approver` when the answer came from a named approver.
+
+#### Who may approve
+
+By default, whoever can read the shared topic can approve, and ADTL can't tell who did. A policy rule can name the roles whose members may answer instead. Each member gets their own topic:
+
+```yaml
+policy:
+  rules:
+    - name: no-public-write-after-untrusted
+      when: { session.integrity: untrusted, tool.egress: [public, external, unknown] }
+      then: ask
+      approvers: [security-leads]       # roles from gateway.roles
+
+gateway:
+  roles:
+    security-leads: { members: [alice, bob], tools: ["*.*"] }
+  approvals:
+    approvers:
+      alice: { ntfy: { topic: "${ALICE_NTFY_TOPIC}" } }
+      bob:   { ntfy: { topic: "${BOB_NTFY_TOPIC}" } }
+```
+
+- The request goes only to the approvers' own topics, never to the shared one. Each person's buttons carry tokens signed for them, and an answer counts only if it comes back on that person's reply topic, so the audit log records who approved (`approver: alice`) and nobody else can. Email notices still go out.
+- If several matching rules name approvers, a person may answer only if they are in one of the roles of every rule.
+- The gateway refuses to start if a rule names a role that isn't under `gateway.roles`, a role with member `"*"`, or a member without a channel under `gateway.approvals.approvers`.
+- Rules without `approvers:` use the shared topic as before. One approval is enough; requiring two, and stopping people from approving their own calls, are not supported yet.
+- Under Claude Code's hooks an "ask" goes to Claude Code's own permission prompt, which doesn't know about approvers.
 
 ### Trying a policy safely
 

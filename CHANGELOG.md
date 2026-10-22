@@ -2,16 +2,18 @@
 
 ## Unreleased
 
+### `@adtl/labels`
+- Policy rules with `then: ask` take `approvers: [role, …]`: who may answer ([#10](https://github.com/probita-ai/adtl/issues/10)). The decision carries each winning rule's approver roles.
+- `globToRegExp()` is exported, for `server.name` patterns.
+
 ### `@adtl/gateway`
+- Named approvers ([#10](https://github.com/probita-ai/adtl/issues/10)): `gateway.approvals.approvers` gives each person their own ntfy topic. An "ask" whose rules name approver roles goes only to those people, with tokens signed for each of them, and an answer counts only on the same person's reply topic, so the audit log records `approver`. Startup checks that every named role exists, has named members, and that each member has a channel.
 - Role-based authorization in the config ([#8](https://github.com/probita-ai/adtl/issues/8)): `gateway.roles` grants tools and prompts (`server.name` patterns, as in policy rules) and resources (URI patterns) to principal ids, or to `"*"`. Once present, anything no role grants is denied. Config errors name the role and field.
 - `tools/list`, `prompts/list` and `resources/list` leave out what the authorizer would deny, so the agent doesn't try it ([#13](https://github.com/probita-ai/adtl/issues/13)). Calls are still checked; nothing is hidden in audit mode.
 - `gateway.principal` sets who runs the gateway (`${VAR}` works in its `id`); it is passed to the authorizer and to the interceptors as `context.principal`.
 
 ### `@adtl/interceptors`
 - `config.server` is optional: without it, `adtl.label` and `adtl.policy` use `context.target`, following SEP-2624's rule that an interceptor invoked without config uses its defaults.
-
-### `@adtl/labels`
-- `globToRegExp()` is exported, for `server.name` patterns.
 
 ## 0.5.1 — experimental
 

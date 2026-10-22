@@ -412,6 +412,8 @@ export class AdtlInterceptors {
       }
       extra.confirmationRejected = confirmed;
     }
+    // Who may answer: the gateway reaches only these roles' members.
+    if (d.approvers) extra.approvers = d.approvers;
     const confirmation = this.confirmationRequest(d.reason, hash, sessionId);
     return this.decision(params, "ask", d.reason, d.matched, hash, session, extra, confirmation);
   }

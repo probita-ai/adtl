@@ -19,6 +19,8 @@
  *     approvals:                         # optional: make "ask" really ask
  *       timeoutSeconds: 50
  *       ntfy: { topic: "${ADTL_NTFY_TOPIC}" }
+ *       approvers:                       # optional: each approver's own channel (policy rule `approvers:`)
+ *         alice: { ntfy: { topic: "${ALICE_NTFY_TOPIC}" } }
  *       email:
  *         smtp: { host: smtp.example.com, port: 465, user: "${SMTP_USER}", pass: "${SMTP_PASS}" }
  *         from: adtl@example.com
@@ -92,6 +94,11 @@ export const ApprovalsConfigSchema = z
     timeoutSeconds: z.number().int().positive().max(3600).default(50),
     ntfy: NtfyConfigSchema.optional(),
     email: EmailConfigSchema.optional(),
+    /**
+     * Each approver's own channel, by principal id. Policy rules with
+     * `approvers: [role]` ask only these people, so the answer names who approved.
+     */
+    approvers: z.record(z.object({ ntfy: NtfyConfigSchema }).strict()).optional(),
   })
   .strict();
 export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>;

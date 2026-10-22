@@ -120,17 +120,46 @@ export function createApprovals(cfg: GatewayConfig, env: NodeJS.ProcessEnv, log:
   if (a.email) {
     notifiers.push(new EmailNotifier({ smtp: a.email.smtp, from: a.email.from, to: [a.email.to].flat(), on: a.email.on }));
   }
-  if (notifiers.length === 0) return undefined;
-  if (!notifiers.some((n) => n.listen)) log.warn('no approval channel can carry answers (configure gateway.approvals.ntfy); "ask" still blocks');
-  log.info(`approvals: ${notifiers.map((n) => n.name).join(", ")} (timeout ${a.timeoutSeconds}s)`);
-  return new ApprovalBroker({ notifiers, timeoutMs: a.timeoutSeconds * 1000, log });
+  const approverChannels = new Map<string, Notifier[]>(
+    Object.entries(a.approvers ?? {}).map(([id, c]) => [id, [new NtfyNotifier({ ...c.ntfy, name: `ntfy:${id}` })]]),
+  );
+  if (notifiers.length === 0 && approverChannels.size === 0) return undefined;
+  if (!notifiers.some((n) => n.listen) && approverChannels.size === 0) {
+    log.warn('no approval channel can carry answers (configure gateway.approvals.ntfy); "ask" still blocks');
+  }
+  const approvers = approverChannels.size ? `; approvers: ${[...approverChannels.keys()].join(", ")}` : "";
+  log.info(`approvals: ${notifiers.map((n) => n.name).join(", ") || "none shared"}${approvers} (timeout ${a.timeoutSeconds}s)`);
+  return new ApprovalBroker({ notifiers, approverChannels, timeoutMs: a.timeoutSeconds * 1000, log });
 }
 
 /**
- * Under Claude Code, which passes `CLAUDE_CODE_SESSION_ID` to stdio MCP
- * servers, the gateway uses that id and keeps session labels in files, so the
- * Claude Code hooks (`adtl-gateway hook`) add to the same session label.
+ * Check that every role a policy rule names under `approvers:` exists, has
+ * named members, and that each member has a channel in
+ * `gateway.approvals.approvers`. Returns each such role's members.
  */
+export function approverRoles(labels: AdtlConfig, cfg: GatewayConfig): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const problems: string[] = [];
+  for (const rule of labels.policy.rules) {
+    for (const role of rule.approvers ?? []) {
+      if (out.has(role)) continue;
+      const r = cfg.roles?.[role];
+      if (!r) {
+        problems.push(`policy rule "${rule.name}" names approver role "${role}", which is not under gateway.roles`);
+        continue;
+      }
+      const members = [...r.members];
+      if (members.includes("*")) problems.push(`approver role "${role}" has member "*": approvers must be named, so the answer says who approved`);
+      for (const m of members.filter((x) => x !== "*")) {
+        if (!cfg.approvals?.approvers?.[m]) problems.push(`approver "${m}" (role "${role}") has no channel under gateway.approvals.approvers`);
+      }
+      out.set(role, members);
+    }
+  }
+  if (problems.length) throw new GatewayConfigError(`approvers:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
+  return out;
+}
+
 /** `gateway.principal`, with `${VAR}` in its id expanded. */
 export function gatewayPrincipal(cfg: GatewayConfig, env: NodeJS.ProcessEnv): Principal | undefined {
   const p = cfg.principal;
@@ -140,6 +169,11 @@ export function gatewayPrincipal(cfg: GatewayConfig, env: NodeJS.ProcessEnv): Pr
   return { type: p.type, id, ...(p.claims ? { claims: p.claims } : {}) };
 }
 
+/**
+ * Under Claude Code, which passes `CLAUDE_CODE_SESSION_ID` to stdio MCP
+ * servers, the gateway uses that id and keeps session labels in files, so the
+ * Claude Code hooks (`adtl-gateway hook`) add to the same session label.
+ */
 export function sharedSession(env: NodeJS.ProcessEnv): { sessionId: string; dir: string } | undefined {
   const sessionId = env.CLAUDE_CODE_SESSION_ID?.trim();
   return sessionId ? { sessionId, dir: defaultSessionsDir(env) } : undefined;
@@ -155,6 +189,8 @@ export async function startGateway(
   opts: { env?: NodeJS.ProcessEnv; logger?: GatewayLogger } = {},
 ): Promise<StartedGateway> {
   const env = opts.env ?? process.env;
+  // Config problems that need no process: fail before starting any.
+  const approverMembers = approverRoles(loaded.labels, loaded.gateway);
   const baseDir = dirname(loaded.path);
   const log = opts.logger ?? { info: (m: string) => console.error(`[adtl-gateway] ${m}`), warn: (m: string) => console.error(`[adtl-gateway] warning: ${m}`) };
   const clients: Client[] = [];
@@ -228,6 +264,7 @@ export async function startGateway(
       ...(approvals ? { approvals } : {}),
       ...(roles ? { authorizer: new RoleAuthorizer(roles) } : {}),
       ...(principal ? { principal } : {}),
+      ...(approverMembers.size ? { approverRoles: approverMembers } : {}),
       logger: log,
     });
     return { gateway, close: closeAll };
