@@ -164,6 +164,21 @@ How it works and what to know:
 - **Mind client timeouts.** Many MCP clients give up on a request after 60 seconds, so the default timeout is 50. The gateway sends progress notifications while it waits, which lets clients that reset their timeout on progress wait longer.
 - **Every outcome is logged.** The audit log records `approval: { outcome, channel, waitedMs }` for each call that was asked, and `approver` when the answer came from a named approver.
 
+#### Approving in the MCP client
+
+Clients that support MCP elicitation (a server asking the user a question in the client) can show the request in place, so you don't need a phone:
+
+```yaml
+gateway:
+  approvals:
+    elicitation: true     # off by default
+```
+
+- The request appears in the client with Allow and Deny. Allow runs that one call; Deny, declining, dismissing or no answer stops it. The answer goes through the same signed token as a push button, so it can only answer the call it was asked about.
+- If ntfy is configured too, both are asked and the first answer wins. Clients without elicitation support are simply not asked.
+- It's off by default because a client that accepts elicitations by itself, without a person, would approve calls. Turn it on only for clients that always show the prompt to you.
+- It's never used for rules with named approvers: the client can't say who answered.
+
 #### Who may approve
 
 By default, whoever can read the shared topic can approve, and ADTL can't tell who did. A policy rule can name the roles whose members may answer instead. Each member gets their own topic:

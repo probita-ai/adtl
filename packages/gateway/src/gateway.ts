@@ -56,6 +56,7 @@ import {
 import type { InvocationContext } from "@adtl/interceptors";
 import { callBindingHash } from "@adtl/labels";
 import type { ApprovalBroker, ApprovalResult } from "./approvals.js";
+import { ElicitationChannel, supportsElicitation } from "./elicitation.js";
 import type { AuditEntry, AuditSink } from "./audit.js";
 import { authorize, type AuthorizationRequest, type Authorizer, type Denial, type Principal } from "./authorizer.js";
 import { TOOL_SEPARATOR } from "./config.js";
@@ -112,6 +113,8 @@ export interface AdtlGatewayOptions {
   principal?: Principal;
   /** Members of each role that policy rules name as `approvers:`. */
   approverRoles?: Map<string, string[]>;
+  /** Also ask for approval in the MCP client, when it supports elicitation. */
+  elicitApprovals?: boolean;
 }
 
 /**
@@ -172,6 +175,9 @@ export class AdtlGateway {
   private readonly authorizer: Authorizer | undefined;
   private readonly principal: Principal;
   private readonly approverRoles: Map<string, string[]>;
+  private readonly elicitApprovals: boolean;
+  /** The server the agent is connected to, for elicitation. */
+  private server: Server | undefined;
   private routes = new Map<string, Route>();
   private promptRoutes = new Map<string, PromptRoute>();
   /** Resource URI → the upstreams that list it. */
@@ -188,6 +194,7 @@ export class AdtlGateway {
     this.authorizer = opts.authorizer;
     this.principal = opts.principal ?? { type: "anonymous" };
     this.approverRoles = opts.approverRoles ?? new Map();
+    this.elicitApprovals = opts.elicitApprovals === true;
   }
 
   /** Ask the authorizer, if any. Returns the denial; in audit mode the caller logs it and carries on. */
@@ -232,6 +239,7 @@ export class AdtlGateway {
       server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: await this.visiblePrompts() }));
       server.setRequestHandler(GetPromptRequestSchema, async (req) => this.getPrompt(req.params.name, req.params.arguments));
     }
+    this.server = server;
     return server;
   }
 
@@ -555,8 +563,10 @@ export class AdtlGateway {
       const hash = b.confirmation?.callHash ?? policy.callHash;
       const lists = Array.isArray(policy.approvers) ? (policy.approvers as string[][]) : undefined;
       const approvers = lists ? eligibleApprovers(lists, this.approverRoles) : undefined;
-      if (b.decision === "ask" && this.approvals?.canApprove && typeof hash === "string") {
-        this.log.info(`ask ${name}: waiting for approval (${b.reason})`);
+      // The client's own prompt, if enabled and supported; never for named approvers (it can't say who answered).
+      const elicit = this.elicitApprovals && !approvers && this.server && supportsElicitation(this.server) ? [new ElicitationChannel(this.server)] : [];
+      if (b.decision === "ask" && this.approvals && (this.approvals.canApprove || elicit.length > 0) && typeof hash === "string") {
+        this.log.info(`ask ${name}: waiting for approval${approvers ? ` from ${approvers.join(", ") || "nobody"}` : ""} (${b.reason})`);
         approval = await this.waitForApproval(opts, () =>
           this.approvals!.request({
             sessionId: this.sessionId,
@@ -567,7 +577,7 @@ export class AdtlGateway {
             matched,
             ...(policy.sessionLabel !== undefined ? { sessionLabel: policy.sessionLabel } : {}),
             ...(approvers ? { approvers } : {}),
-          }),
+          }, elicit),
         );
         this.log.info(`ask ${name}: ${approval.outcome}`);
         if (approval.outcome !== "approved") {

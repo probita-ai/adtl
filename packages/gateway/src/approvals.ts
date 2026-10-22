@@ -154,16 +154,20 @@ export class ApprovalBroker {
     return this.notifiers.some((n) => n.listen) || [...this.approverChannels.values()].some((ns) => ns.some((n) => n.listen));
   }
 
-  /** Where a request goes: the named approvers' own channels plus notice-only ones, or else every shared channel. */
-  private targets(request: ApprovalRequest): Target[] {
-    if (!request.approvers) return this.notifiers.map((notifier) => ({ notifier }));
+  /**
+   * Where a request goes: the named approvers' own channels plus notice-only
+   * ones, or else every shared channel plus `extra` (channels for this request
+   * only, such as the client's elicitation).
+   */
+  private targets(request: ApprovalRequest, extra: Notifier[]): Target[] {
+    if (!request.approvers) return [...this.notifiers, ...extra].map((notifier) => ({ notifier }));
     const own = request.approvers.flatMap((approver) => (this.approverChannels.get(approver) ?? []).map((notifier) => ({ notifier, approver })));
     // Shared channels that can answer would let anyone who reads them approve; notice-only ones (email) are fine.
     return [...own, ...this.notifiers.filter((n) => !n.listen).map((notifier) => ({ notifier }))];
   }
 
   /** Ask for approval and wait for the answer, the timeout, or a failure to reach anyone. */
-  async request(input: Omit<ApprovalRequest, "id" | "createdAt" | "expiresAt">): Promise<ApprovalResult> {
+  async request(input: Omit<ApprovalRequest, "id" | "createdAt" | "expiresAt">, extra: Notifier[] = []): Promise<ApprovalResult> {
     const createdAt = this.now();
     const request: ApprovalRequest = {
       ...input,
@@ -192,7 +196,7 @@ export class ApprovalBroker {
     });
 
     // Start listening before anyone can answer, then send the request to every target.
-    const targets = this.targets(request);
+    const targets = this.targets(request, extra);
     for (const { notifier: n, approver } of targets.filter((t) => t.notifier.listen)) {
       n.listen!(request, (token, reportedBy) => this.answer(token, n.name, approver, reportedBy), abort.signal).catch((err: unknown) =>
         this.log.warn(`${n.name}: stopped listening for approvals: ${errorText(err)}`),

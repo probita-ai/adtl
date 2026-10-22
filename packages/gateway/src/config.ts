@@ -95,6 +95,11 @@ export const ApprovalsConfigSchema = z
     ntfy: NtfyConfigSchema.optional(),
     email: EmailConfigSchema.optional(),
     /**
+     * Also ask in the MCP client (elicitation), when it supports it. Off by
+     * default: a client that accepts elicitations by itself would approve calls.
+     */
+    elicitation: z.boolean().default(false),
+    /**
      * Each approver's own channel, by principal id. Policy rules with
      * `approvers: [role]` ask only these people, so the answer names who approved.
      */

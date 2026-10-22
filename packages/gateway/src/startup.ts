@@ -123,12 +123,13 @@ export function createApprovals(cfg: GatewayConfig, env: NodeJS.ProcessEnv, log:
   const approverChannels = new Map<string, Notifier[]>(
     Object.entries(a.approvers ?? {}).map(([id, c]) => [id, [new NtfyNotifier({ ...c.ntfy, name: `ntfy:${id}` })]]),
   );
-  if (notifiers.length === 0 && approverChannels.size === 0) return undefined;
-  if (!notifiers.some((n) => n.listen) && approverChannels.size === 0) {
+  if (notifiers.length === 0 && approverChannels.size === 0 && !a.elicitation) return undefined;
+  if (!notifiers.some((n) => n.listen) && approverChannels.size === 0 && !a.elicitation) {
     log.warn('no approval channel can carry answers (configure gateway.approvals.ntfy); "ask" still blocks');
   }
   const approvers = approverChannels.size ? `; approvers: ${[...approverChannels.keys()].join(", ")}` : "";
-  log.info(`approvals: ${notifiers.map((n) => n.name).join(", ") || "none shared"}${approvers} (timeout ${a.timeoutSeconds}s)`);
+  const shared = [...notifiers.map((n) => n.name), ...(a.elicitation ? ["elicitation (if the client supports it)"] : [])];
+  log.info(`approvals: ${shared.join(", ") || "none shared"}${approvers} (timeout ${a.timeoutSeconds}s)`);
   return new ApprovalBroker({ notifiers, approverChannels, timeoutMs: a.timeoutSeconds * 1000, log });
 }
 
@@ -265,6 +266,7 @@ export async function startGateway(
       ...(roles ? { authorizer: new RoleAuthorizer(roles) } : {}),
       ...(principal ? { principal } : {}),
       ...(approverMembers.size ? { approverRoles: approverMembers } : {}),
+      ...(loaded.gateway.approvals?.elicitation ? { elicitApprovals: true } : {}),
       logger: log,
     });
     return { gateway, close: closeAll };
