@@ -55,12 +55,31 @@ export interface Blocked {
   confirmation?: ConfirmationRequest;
 }
 
+/**
+ * One interceptor invocation, with the execution policy it ran under. SEP-2624
+ * (Security Best Practice 3) asks invokers to log the resolved `mode` and
+ * `failOpen`, and whether each came from an invoker override or the
+ * interceptor's declared default.
+ */
+export interface InterceptorRun {
+  name: string;
+  phase: Phase;
+  mode: InterceptorMode;
+  modeFrom: "override" | "default";
+  failOpen: boolean;
+  failOpenFrom: "override" | "default";
+  /** Set when the invocation errored or timed out. */
+  failed?: true;
+}
+
 export interface PhaseOutcome {
   payload: unknown;
   blocked?: Blocked;
   results: InterceptorResult[];
   /** Interceptors that failed but were allowed to (failOpen or audit mode). */
   warnings: string[];
+  /** Every interceptor invoked in this phase. */
+  ran: InterceptorRun[];
 }
 
 export interface InvokeOptions {
@@ -101,14 +120,14 @@ export class InterceptorInvoker {
   }
 
   async runRequest(opts: InvokeOptions): Promise<PhaseOutcome> {
-    const out: PhaseOutcome = { payload: opts.payload, results: [], warnings: [] };
+    const out: PhaseOutcome = { payload: opts.payload, results: [], warnings: [], ran: [] };
     if (!(await this.mutate("request", opts, out))) return out;
     await this.validate("request", opts, out);
     return out;
   }
 
   async runResponse(opts: InvokeOptions): Promise<PhaseOutcome> {
-    const out: PhaseOutcome = { payload: opts.payload, results: [], warnings: [] };
+    const out: PhaseOutcome = { payload: opts.payload, results: [], warnings: [], ran: [] };
     if (!(await this.validate("response", opts, out))) return out;
     await this.mutate("response", opts, out);
     return out;
@@ -116,6 +135,20 @@ export class InterceptorInvoker {
 
   private isAudit(i: BoundInterceptor): boolean {
     return (this.modeOverride ?? i.definition.mode) === "audit";
+  }
+
+  /** Record that `i` runs in `phase`, with its resolved policy. The gateway has no failOpen overrides. */
+  private run(i: BoundInterceptor, phase: Phase, out: PhaseOutcome): InterceptorRun {
+    const r: InterceptorRun = {
+      name: i.definition.name,
+      phase,
+      mode: this.modeOverride ?? i.definition.mode ?? "active",
+      modeFrom: this.modeOverride ? "override" : "default",
+      failOpen: i.definition.failOpen === true,
+      failOpenFrom: "default",
+    };
+    out.ran.push(r);
+    return r;
   }
 
   private select(type: InterceptorDefinition["type"], event: string, phase: Phase): BoundInterceptor[] {
@@ -150,10 +183,12 @@ export class InterceptorInvoker {
     );
     let payload = out.payload;
     for (const i of selected) {
+      const ran = this.run(i, phase, out);
       let r: MutationResult;
       try {
         r = (await this.invoke(i, phase, opts, payload)) as MutationResult;
       } catch (err) {
+        ran.failed = true;
         if (!this.failed(i, err, out)) return false;
         continue;
       }
@@ -167,11 +202,13 @@ export class InterceptorInvoker {
   /** Parallel validations. Only severity "error" blocks. */
   private async validate(phase: Phase, opts: InvokeOptions, out: PhaseOutcome): Promise<boolean> {
     const selected = this.select("validation", opts.event, phase);
+    const runs = selected.map((i) => this.run(i, phase, out));
     const settled = await Promise.allSettled(selected.map((i) => this.invoke(i, phase, opts, out.payload)));
     let ok = true;
     settled.forEach((s, idx) => {
       const i = selected[idx]!;
       if (s.status === "rejected") {
+        runs[idx]!.failed = true;
         if (!this.failed(i, s.reason, out)) ok = false;
         return;
       }

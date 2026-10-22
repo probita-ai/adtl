@@ -59,7 +59,7 @@ import type { ApprovalBroker, ApprovalResult } from "./approvals.js";
 import type { AuditEntry, AuditSink } from "./audit.js";
 import { authorize, type AuthorizationRequest, type Authorizer, type Denial, type Principal } from "./authorizer.js";
 import { TOOL_SEPARATOR } from "./config.js";
-import type { Blocked, PhaseOutcome, InterceptorInvoker } from "./invoker.js";
+import type { Blocked, InterceptorInvoker, InterceptorRun, PhaseOutcome } from "./invoker.js";
 
 export const GATEWAY_VERSION = "0.5.1";
 
@@ -433,6 +433,7 @@ export class AdtlGateway {
     const config = { server: upstream };
     const audit = this.invoker.modeOverride === "audit" ? { mode: "audit" as const } : {};
     let denied: Denial | undefined;
+    const ran: InterceptorRun[] = [];
     const finish = (entry: Pick<AuditEntry, "outcome"> & Partial<AuditEntry>) =>
       this.audit?.write({
         ts: context.timestamp!,
@@ -442,6 +443,7 @@ export class AdtlGateway {
         ...target,
         ...(denied ? { denied } : {}),
         ...entry,
+        ...(ran.length ? { interceptors: [...ran] } : {}),
         durationMs: Math.round(performance.now() - started),
       });
     const what = "resource" in target ? `resource ${target.resource}` : `prompt ${upstream}${TOOL_SEPARATOR}${target.prompt}`;
@@ -460,6 +462,7 @@ export class AdtlGateway {
     if (denied) this.log.info(`audit: would deny ${what}: ${denied.reason}`);
 
     const req = await this.invoker.runRequest({ event, payload: { method: event, params }, config, context });
+    ran.push(...req.ran);
     if (req.blocked) {
       finish({ outcome: "blocked", decision: req.blocked.decision, reason: req.blocked.reason, warnings: req.warnings });
       this.log.info(`${req.blocked.decision} ${what}: ${req.blocked.reason}`);
@@ -476,6 +479,7 @@ export class AdtlGateway {
     }
 
     const res = await this.invoker.runResponse({ event, payload: { method: event, params: forwarded, result }, config, context });
+    ran.push(...res.ran);
     const warnings = [...req.warnings, ...res.warnings];
     if (res.blocked) {
       // Fail closed: unlabeled content must not reach the agent.
@@ -511,8 +515,16 @@ export class AdtlGateway {
     };
     const base = { sessionId: this.sessionId, event: "tools/call" as const, server: route.upstream, tool: route.tool };
     let denied: Denial | undefined;
+    const ran: InterceptorRun[] = [];
     const finish = (entry: Omit<AuditEntry, keyof typeof base | "ts" | "durationMs">) =>
-      this.audit?.write({ ts: context.timestamp!, ...base, ...(denied ? { denied } : {}), ...entry, durationMs: Math.round(performance.now() - started) });
+      this.audit?.write({
+        ts: context.timestamp!,
+        ...base,
+        ...(denied ? { denied } : {}),
+        ...entry,
+        ...(ran.length ? { interceptors: [...ran] } : {}),
+        durationMs: Math.round(performance.now() - started),
+      });
 
     // 0. Authorization: may this caller use this tool at all? A denial wins over any policy decision.
     denied = await this.authorize({ event: "tools/call", server: route.upstream, tool: route.tool, arguments: args });
@@ -531,6 +543,7 @@ export class AdtlGateway {
     // 1. Request phase: adtl.policy decides whether the call may run.
     const requestPayload = { method: "tools/call", params: { name: route.tool, arguments: args } };
     let req = await this.invoker.runRequest({ event: "tools/call", payload: requestPayload, config, context });
+    ran.push(...req.ran);
     const policy = infoOf(req, "adtl.policy");
     let approval: ApprovalResult | undefined;
     if (req.blocked) {
@@ -573,6 +586,7 @@ export class AdtlGateway {
             ...(approval.approver ? { principal: { type: "user" as const, id: approval.approver } } : {}),
           }];
           req = await this.invoker.runRequest({ event: "tools/call", payload: requestPayload, config, context: { ...context, confirmations } });
+          ran.push(...req.ran);
           const sent = callBindingHash({ event: "tools/call", phase: "request", target: route.upstream, payload: req.payload });
           const recheck = req.blocked?.reason ?? (sent !== c.callHash ? "the call changed after it was approved" : undefined);
           if (recheck !== undefined) {
@@ -616,6 +630,7 @@ export class AdtlGateway {
       config,
       context,
     });
+    ran.push(...res.ran);
     if (res.blocked) {
       // Fail closed: an unlabeled result must not reach the agent.
       finish({ outcome: "blocked", decision: res.blocked.decision, reason: res.blocked.reason, callHash: policy.callHash, warnings: [...req.warnings, ...res.warnings] });

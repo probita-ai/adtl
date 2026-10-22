@@ -121,6 +121,8 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 
 #### Checking the audit log
 
+Each entry lists the interceptors that ran for the call, with the execution policy each ran under, as SEP-2624 asks: `interceptors: [{ name, phase, mode, modeFrom, failOpen, failOpenFrom, failed? }]`, where `*From` is `override` (set by the gateway, e.g. `--audit`) or `default` (declared by the interceptor).
+
 Each line carries `prev`, the hash of the line before, and `hash`, over the line itself. Check the chain with:
 
 ```sh

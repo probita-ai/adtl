@@ -18,6 +18,7 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { digest, sha256Hex } from "@adtl/labels";
+import type { InterceptorRun } from "./invoker.js";
 
 export interface AuditEntry {
   ts: string;
@@ -49,6 +50,8 @@ export interface AuditEntry {
   /** Present when the result carried record label stamps: how many, and which sessions wrote them. */
   records?: unknown;
   sessionLabel?: unknown;
+  /** Every interceptor invocation for this call, with its resolved mode and failOpen and where each came from (SEP-2624). */
+  interceptors?: InterceptorRun[];
   warnings?: string[];
   durationMs: number;
 }
