@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### `@adtl/gateway`
+- Role-based authorization in the config ([#8](https://github.com/probita-ai/adtl/issues/8)): `gateway.roles` grants tools and prompts (`server.name` patterns, as in policy rules) and resources (URI patterns) to principal ids, or to `"*"`. Once present, anything no role grants is denied. Config errors name the role and field.
+- `gateway.principal` sets who runs the gateway (`${VAR}` works in its `id`); it is passed to the authorizer and to the interceptors as `context.principal`.
+
+### `@adtl/labels`
+- `globToRegExp()` is exported, for `server.name` patterns.
+
 ## 0.5.1 — experimental
 
 Record labels now hold up on memory servers that resolve references from recent messages and overlay updates, such as Mem0 ([#41](https://github.com/probita-ai/adtl/issues/41)). Thanks to Edward Izgorodin for the analysis of Mem0's message buffer.

@@ -14,9 +14,11 @@ import { parse as parseYaml } from "yaml";
 import { ZodError } from "zod";
 import { ApprovalBroker, type Notifier } from "./approvals.js";
 import { JsonlAuditLog } from "./audit.js";
+import type { Principal } from "./authorizer.js";
 import {
   GatewayConfigSchema,
   expandApprovals,
+  expandEnv,
   expandUpstream,
   isHttpUpstream,
   type GatewayConfig,
@@ -27,6 +29,7 @@ import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
 import { InterceptorInvoker } from "./invoker.js";
 import { NtfyNotifier } from "./ntfy.js";
+import { RoleAuthorizer } from "./roles.js";
 
 export class GatewayConfigError extends Error {
   constructor(message: string) {
@@ -128,6 +131,15 @@ export function createApprovals(cfg: GatewayConfig, env: NodeJS.ProcessEnv, log:
  * servers, the gateway uses that id and keeps session labels in files, so the
  * Claude Code hooks (`adtl-gateway hook`) add to the same session label.
  */
+/** `gateway.principal`, with `${VAR}` in its id expanded. */
+export function gatewayPrincipal(cfg: GatewayConfig, env: NodeJS.ProcessEnv): Principal | undefined {
+  const p = cfg.principal;
+  if (!p) return undefined;
+  const id = expandEnv(p.id, env, "gateway.principal.id").trim();
+  if (!id) throw new GatewayConfigError("gateway.principal.id is empty after expanding environment variables");
+  return { type: p.type, id, ...(p.claims ? { claims: p.claims } : {}) };
+}
+
 export function sharedSession(env: NodeJS.ProcessEnv): { sessionId: string; dir: string } | undefined {
   const sessionId = env.CLAUDE_CODE_SESSION_ID?.trim();
   return sessionId ? { sessionId, dir: defaultSessionsDir(env) } : undefined;
@@ -202,12 +214,20 @@ export async function startGateway(
 
     const auditLog = loaded.gateway.audit ? new JsonlAuditLog(resolve(baseDir, loaded.gateway.audit)) : undefined;
     const approvals = createApprovals(loaded.gateway, env, log);
+    const principal = gatewayPrincipal(loaded.gateway, env);
+    const roles = loaded.gateway.roles;
+    if (roles) {
+      log.info(`roles: ${Object.keys(roles).join(", ")} (caller: ${principal?.id ?? "anonymous"})`);
+      if (!principal) log.warn('roles are set but gateway.principal is not: only roles with members ["*"] apply');
+    }
     const gateway = new AdtlGateway({
       ...(shared ? { sessionId: shared.sessionId } : {}),
       upstreams,
       invoker,
       ...(auditLog ? { audit: auditLog } : {}),
       ...(approvals ? { approvals } : {}),
+      ...(roles ? { authorizer: new RoleAuthorizer(roles) } : {}),
+      ...(principal ? { principal } : {}),
       logger: log,
     });
     return { gateway, close: closeAll };

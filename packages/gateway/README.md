@@ -116,6 +116,8 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 | `gateway.approvals` | Ask a human about `ask` decisions. See [Approvals](#approvals). |
 | `gateway.interceptorTimeoutMs` | Timeout per interceptor call (default 5000) |
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
+| `gateway.principal` | Who runs this gateway: `{ id, type?, claims? }`. `${VAR}` works in `id`. Default: anonymous. See [Authorization](#authorization). |
+| `gateway.roles` | Who may use which tools, prompts and resources. Deny by default once present. See [Authorization](#authorization). |
 
 #### Checking the audit log
 
@@ -272,7 +274,23 @@ agent ──▶ adtl-gateway ──▶ upstream MCP servers
 
 ### Authorization
 
-Labels and the policy decide whether a call may run given what the session has seen. An `Authorizer` decides before that whether the caller may use the tool, resource or prompt at all. It is a library interface for now; role-based rules in the config are planned ([#8](https://github.com/probita-ai/adtl/issues/8)).
+Labels and the policy decide whether a call may run given what the session has seen. Authorization decides before that whether the caller may use the tool, resource or prompt at all.
+
+Roles in the config:
+
+```yaml
+gateway:
+  principal: { id: "${USER}" }      # who runs this gateway
+  roles:
+    maintainers: { members: [alice, bob], tools: ["github.*"] }
+    readers:     { members: ["*"],        tools: ["github.read_*", "github.get_*"], resources: ["github://acme/website/*"] }
+```
+
+- A call is allowed if a role the caller belongs to grants it. Once `roles:` is present, everything else is denied.
+- `tools` and `prompts` are `server.name` patterns with `*`, as in policy rules; `resources` are URI patterns. Members are principal ids; `"*"` means everyone, including an anonymous caller.
+- Over stdio the caller is whoever started the gateway, set with `gateway.principal`. Without it the caller is anonymous and only roles with `members: ["*"]` apply (the gateway warns at startup).
+
+Or your own `Authorizer` in code:
 
 ```ts
 import { AdtlGateway, type Authorizer } from "@adtl/gateway";

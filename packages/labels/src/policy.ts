@@ -31,7 +31,8 @@ function asArray<T>(v: T | readonly T[] | undefined): readonly T[] | undefined {
   return Array.isArray(v) ? (v as readonly T[]) : [v as T];
 }
 
-function globToRegExp(glob: string): RegExp {
+/** `*` matches any run of characters; everything else is literal. Used for `server.tool` patterns. */
+export function globToRegExp(glob: string): RegExp {
   const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
   return new RegExp(`^${escaped}$`);
 }
