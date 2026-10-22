@@ -8,6 +8,8 @@
  *   adtl-gateway hook --config adtl.yaml [--gateway-server adtl]
  *   adtl-gateway ledger stats|verify|declassify|declassified
  *   adtl-gateway audit verify [<file>]
+ *   adtl-gateway receipt list|<session>|verify <file>
+ *   adtl-gateway key
  *
  * Point your MCP client (e.g. Claude Code's .mcp.json) at this command.
  * Logs go to stderr; stdout carries MCP JSON-RPC only.
@@ -16,6 +18,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { EnvExpansionError } from "./config.js";
 import { GATEWAY_VERSION } from "./gateway.js";
 import { runAuditCommand } from "./auditCli.js";
+import { runKeyCommand, runReceiptCommand } from "./receiptCli.js";
 import { runHook } from "./hooks/run.js";
 import { runLedgerCommand } from "./ledgerCli.js";
 import { runInit, type InitResult } from "./init/run.js";
@@ -26,6 +29,8 @@ const USAGE = `Usage: adtl-gateway --config <adtl.yaml> [--audit]
        adtl-gateway hook --config <adtl.yaml> [--gateway-server <name>]
        adtl-gateway ledger stats|verify|declassify|declassified  (see: adtl-gateway ledger --help)
        adtl-gateway audit verify [<file>]  (see: adtl-gateway audit --help)
+       adtl-gateway receipt list|<session>|verify <file>  (see: adtl-gateway receipt --help)
+       adtl-gateway key
 
 Runs an MCP server over stdio that forwards tool calls to the upstream
 servers in the config, checking and labeling each call with ADTL.
@@ -100,6 +105,12 @@ async function main(): Promise<void> {
   }
   if (process.argv[2] === "audit") {
     const r = await runAuditCommand(process.argv.slice(3));
+    console.log(r.stdout);
+    process.exitCode = r.exitCode;
+    return;
+  }
+  if (process.argv[2] === "receipt" || process.argv[2] === "key") {
+    const r = process.argv[2] === "key" ? await runKeyCommand() : await runReceiptCommand(process.argv.slice(3));
     console.log(r.stdout);
     process.exitCode = r.exitCode;
     return;
@@ -190,7 +201,7 @@ async function init(path: string, write: boolean, from?: string): Promise<void> 
 }
 
 main().catch((err: unknown) => {
-  const known = err instanceof GatewayConfigError || err instanceof EnvExpansionError || ["ledger", "audit"].includes(process.argv[2] ?? "");
+  const known = err instanceof GatewayConfigError || err instanceof EnvExpansionError || ["ledger", "audit", "receipt", "key"].includes(process.argv[2] ?? "");
   console.error(known ? `[adtl-gateway] ${(err as Error).message}` : err);
   // For Claude Code hooks only exit code 2 stops the call; any other code lets it run.
   process.exit(process.argv[2] === "hook" ? 2 : 1);

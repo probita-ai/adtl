@@ -7,7 +7,7 @@
  * Logs go to stderr; stdout carries MCP JSON-RPC only.
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { FileSessionStore } from "@adtl/labels";
+import { FileSessionStore, defaultSigningKeyPath, trySigner } from "@adtl/labels";
 import { Ledger, defaultLedgerPath } from "@adtl/ledger";
 import { dirname, resolve } from "node:path";
 import { AdtlInterceptors, VERSION } from "./adtlInterceptors.js";
@@ -65,7 +65,10 @@ async function main(): Promise<void> {
   const sessionsDir = args.sessionsDir ?? (process.env.ADTL_SESSIONS_DIR?.trim() || undefined);
   const sessions = sessionsDir ? new FileSessionStore(sessionsDir) : undefined;
   const ledgerPath = config.ledger.path ? resolve(dirname(resolve(args.config)), config.ledger.path) : defaultLedgerPath();
-  const ledger = config.ledger.enabled ? new Ledger(ledgerPath, { retentionDays: config.ledger.retentionDays }) : undefined;
+  const signer = config.ledger.enabled ? trySigner(defaultSigningKeyPath(), (m) => console.error(`[adtl-interceptors] warning: ${m}`)) : undefined;
+  const ledger = config.ledger.enabled
+    ? new Ledger(ledgerPath, { retentionDays: config.ledger.retentionDays, ...(signer ? { signer } : {}) })
+    : undefined;
   const server = createInterceptorServer(
     new AdtlInterceptors({ config, ...(sessions ? { sessions } : {}), ...(ledger ? { ledger } : {}) }),
   );

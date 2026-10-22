@@ -3,10 +3,16 @@
 ## Unreleased
 
 ### `@adtl/labels`
+- Ed25519 signing keys: `loadOrCreateSigner()` (`~/.adtl/signing-key.pem`, or `ADTL_SIGNING_KEY`; created on first use, mode 0600), `loadSigner()`, `signCanonical()`, `verifyCanonical()`, `verifySignature()`. Public keys are written `ed25519:<base64url>`.
 - Policy rules with `then: ask` take `approvers: [role, …]`: who may answer ([#10](https://github.com/probita-ai/adtl/issues/10)). The decision carries each winning rule's approver roles.
 - `globToRegExp()` is exported, for `server.name` patterns.
 
+### `@adtl/ledger`
+- Signed entries ([#29](https://github.com/probita-ai/adtl/issues/29)): with a `signer`, every entry, declassifications included, carries an Ed25519 signature over its hash and the signer's public key. `verify()` reports bad signatures, entries signed by keys outside `trustedKeys` (default: the signer's own), and unsigned entries after signed ones. Older ledgers get the new columns automatically; their entries count as written before signing.
+
 ### `@adtl/gateway`
+- Session receipts ([#26](https://github.com/probita-ai/adtl/issues/26)): `adtl-gateway receipt <session>` writes a signed summary of every call a session made (tool, outcome, decision, approver, call hash, result label, audit line hash, counts), built from the verified audit log. `receipt verify` checks the signature, the signer (`--key`) and, with `--log`, that no call was left out. `receipt list` shows sessions; `adtl-gateway key` prints the public key.
+- The interceptors, the Claude Code hook and `ledger declassify` sign ledger entries with the machine's key; `ledger verify` reports signatures. The hook guards the key file like the ledger.
 - Approvals in the MCP client ([#6](https://github.com/probita-ai/adtl/issues/6)): with `gateway.approvals.elicitation: true`, an "ask" is also shown in clients that support elicitation, with Allow and Deny; the first answer from any channel wins. Declining or dismissing denies. Off by default, and never used for rules with named approvers.
 - Named approvers ([#10](https://github.com/probita-ai/adtl/issues/10)): `gateway.approvals.approvers` gives each person their own ntfy topic. An "ask" whose rules name approver roles goes only to those people, with tokens signed for each of them, and an answer counts only on the same person's reply topic, so the audit log records `approver`. Startup checks that every named role exists, has named members, and that each member has a channel.
 - Role-based authorization in the config ([#8](https://github.com/probita-ai/adtl/issues/8)): `gateway.roles` grants tools and prompts (`server.name` patterns, as in policy rules) and resources (URI patterns) to principal ids, or to `"*"`. Once present, anything no role grants is denied. Config errors name the role and field.

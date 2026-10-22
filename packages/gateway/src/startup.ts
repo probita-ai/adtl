@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { INTERCEPTORS_EXTENSION, LABEL_INTERCEPTOR, POLICY_INTERCEPTOR, parseConfigText } from "@adtl/interceptors";
-import { defaultSessionsDir, type AdtlConfig } from "@adtl/labels";
+import { SIGNING_KEY_ENV, defaultSessionsDir, type AdtlConfig } from "@adtl/labels";
 import { parse as parseYaml } from "yaml";
 import { ZodError } from "zod";
 import { ApprovalBroker, type Notifier } from "./approvals.js";
@@ -202,7 +202,10 @@ export async function startGateway(
     const shared = sharedSession(env);
     const custom = loaded.gateway.interceptors && expandUpstream("interceptors", loaded.gateway.interceptors, env);
     // The interceptor process starts with a minimal environment; pass on where the ledger lives.
-    const ledgerEnv: Record<string, string> = env.ADTL_LEDGER ? { ADTL_LEDGER: env.ADTL_LEDGER } : {};
+    const ledgerEnv: Record<string, string> = {
+      ...(env.ADTL_LEDGER ? { ADTL_LEDGER: env.ADTL_LEDGER } : {}),
+      ...(env[SIGNING_KEY_ENV] ? { [SIGNING_KEY_ENV]: env[SIGNING_KEY_ENV]! } : {}),
+    };
     const icfg: StdioUpstream = custom
       ? { ...custom, env: { ...ledgerEnv, ...custom.env, ...(shared ? { ADTL_SESSIONS_DIR: shared.dir } : {}) } }
       : {

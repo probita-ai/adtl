@@ -129,7 +129,23 @@ Each line carries `prev`, the hash of the line before, and `hash`, over the line
 adtl-gateway audit verify -c adtl.yaml      # or: adtl-gateway audit verify ./adtl-audit.jsonl
 ```
 
-It exits 1 if a line was edited, removed, reordered or inserted, and prints the hash of the last line. Cutting lines off the end is not detected, so note that hash somewhere else if you need to check later. Lines written by 0.4 or earlier are reported as written before the chain. The gateway and the Claude Code hook append through a lock file (`<log>.lock`), so their lines stay in one chain. The hook blocks `Write`/`Edit` on the log and asks before shell commands that mention it. The chain has no secret: an agent with shell access could still rewrite the whole file consistently. Signed session receipts are planned for that ([#26](https://github.com/probita-ai/adtl/issues/26)).
+It exits 1 if a line was edited, removed, reordered or inserted, and prints the hash of the last line. Cutting lines off the end is not detected, so note that hash somewhere else if you need to check later. Lines written by 0.4 or earlier are reported as written before the chain. The gateway and the Claude Code hook append through a lock file (`<log>.lock`), so their lines stay in one chain. The hook blocks `Write`/`Edit` on the log and asks before shell commands that mention it. The chain has no secret: an agent with shell access could still rewrite the whole file consistently. A signed receipt fixes what a session did at the time you take it (see below).
+
+#### Session receipts
+
+A receipt is a signed summary of every call one session made through the gateway and the Claude Code hooks, taken from the audit log: for each call the tool, outcome, decision, approver, call hash, result label and the hash of its log line, plus counts. Arguments and results are never included.
+
+```sh
+adtl-gateway receipt list -c adtl.yaml                     # sessions in the log, newest first
+adtl-gateway receipt <session> -c adtl.yaml -o receipt.json
+adtl-gateway receipt verify receipt.json --log adtl-audit.jsonl --key ed25519:...
+adtl-gateway key                                           # this machine's public key
+```
+
+- Receipts are signed with this machine's Ed25519 key, `~/.adtl/signing-key.pem` (or `ADTL_SIGNING_KEY`), created on first use and readable only by you. `adtl-gateway key` prints the public key to give to whoever checks your receipts.
+- `verify` checks the signature; with `--key`, that your key made it; with `--log`, that the log is intact and the receipt lists every line the session wrote between its first and last call, so a call can't be left out.
+- A receipt is refused if the audit log's chain is broken.
+- The same key signs ledger entries and declassifications (see [Label ledger](#label-ledger)). The Claude Code hook blocks `Write`/`Edit` on the key file and asks before shell commands that mention it. A signature shows which key signed and that nothing changed since; it doesn't stop someone who can read the key, such as an agent with shell access as you, from signing records of their own. Keep the key out of the agent's reach if that matters, for example by pointing `ADTL_SIGNING_KEY` at a file the agent's user can't read.
 
 `${VAR}` in commands, args, env, URLs and headers is read from the environment, so secrets stay out of the file.
 
@@ -275,7 +291,7 @@ Look after it with:
 
 ```sh
 adtl-gateway ledger stats
-adtl-gateway ledger verify                  # exit 1 if an entry was changed or removed
+adtl-gateway ledger verify                  # exit 1 if an entry was changed, removed, or signed by another key
 adtl-gateway ledger declassify notes.md --reason "checked by hand, no instructions"
                                             # after checking it: clear the label of its current content
 adtl-gateway ledger declassified            # recent declassifications: when, who, what and why
@@ -283,7 +299,7 @@ adtl-gateway ledger declassified            # recent declassifications: when, wh
 
 `--reason` is required. Declassifying is where taint tracking tends to erode, as it turns into a reflex, so each one is kept with who did it, the file and the reason, for review with `declassified`.
 
-Matching is by normalized chunks (whole text, paragraphs, lines of 32+ characters), so text copied into a bigger file still matches, and text the agent rewrote was already recorded with its session's label. Text a person rewrites by hand, binary files, and content an MCP server returns in another encoding (such as base64) are not matched. The Claude Code hook blocks `Write`/`Edit` on the ledger file and asks before shell commands that mention it or `ledger declassify`. Entries are hash-chained, not signed: an agent with shell access could still rebuild the file, which `verify` cannot detect. Signed entries are planned with labels that travel between agents (v0.6).
+Matching is by normalized chunks (whole text, paragraphs, lines of 32+ characters), so text copied into a bigger file still matches, and text the agent rewrote was already recorded with its session's label. Text a person rewrites by hand, binary files, and content an MCP server returns in another encoding (such as base64) are not matched. The Claude Code hook blocks `Write`/`Edit` on the ledger file and asks before shell commands that mention it or `ledger declassify`. Entries are hash-chained and, from 0.6, signed with this machine's key (the same one as [receipts](#session-receipts)), declassifications included, so a reader elsewhere can check who labeled content. `verify` reports entries signed by another key, bad signatures, and unsigned entries after signed ones; entries written before signing are counted, not refused. Someone who can read the key can still sign a rebuilt file.
 
 See [the delayed-injection demo](../../examples/delayed-injection-demo) (`npm run demo:ledger`).
 

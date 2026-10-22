@@ -13,3 +13,5 @@ export * from "./ledgerCli.js";
 export * from "./auditCli.js";
 export * from "./roles.js";
 export * from "./elicitation.js";
+export * from "./receipt.js";
+export * from "./receiptCli.js";

@@ -23,6 +23,16 @@ export interface AuditCommandResult {
   exitCode: number;
 }
 
+/** The audit log: `file` if given, else `gateway.audit` from `config`. */
+export async function resolveAuditPath(file: string | undefined, config: string | undefined, usage: string): Promise<string> {
+  if (file) return resolve(file);
+  if (!config) throw new Error(`Give the audit log file, or -c <adtl.yaml> with gateway.audit set\n\n${usage}`);
+  const abs = resolve(config);
+  const gw = ((parseYaml(await readFile(abs, "utf8")) ?? {}) as { gateway?: { audit?: unknown } }).gateway ?? {};
+  if (typeof gw.audit !== "string") throw new Error(`${config} has no gateway.audit`);
+  return resolve(dirname(abs), gw.audit);
+}
+
 export async function runAuditCommand(argv: string[]): Promise<AuditCommandResult> {
   const [cmd, ...rest] = argv;
   let config: string | undefined;
@@ -37,14 +47,7 @@ export async function runAuditCommand(argv: string[]): Promise<AuditCommandResul
   if (cmd !== "verify") throw new Error(`Unknown audit command: ${cmd}\n\n${AUDIT_USAGE}`);
   if (files.length > 1) throw new Error(`Unexpected argument: ${files[1]}\n\n${AUDIT_USAGE}`);
 
-  let path = files[0] && resolve(files[0]);
-  if (!path) {
-    if (!config) throw new Error(`Give the audit log file, or -c <adtl.yaml> with gateway.audit set\n\n${AUDIT_USAGE}`);
-    const abs = resolve(config);
-    const gw = ((parseYaml(await readFile(abs, "utf8")) ?? {}) as { gateway?: { audit?: unknown } }).gateway ?? {};
-    if (typeof gw.audit !== "string") throw new Error(`${config} has no gateway.audit`);
-    path = resolve(dirname(abs), gw.audit);
-  }
+  const path = await resolveAuditPath(files[0], config, AUDIT_USAGE);
 
   const v = verifyAuditLog(path);
   if (!v.ok) return { stdout: `${path}: TAMPERED: ${v.problem}`, exitCode: 1 };

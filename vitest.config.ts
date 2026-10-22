@@ -13,6 +13,7 @@ export default defineConfig({
       HOME: mkdtempSync(join(tmpdir(), "adtl-test-home-")),
       ADTL_LEDGER: "",
       ADTL_SESSIONS_DIR: "",
+      ADTL_SIGNING_KEY: "",
     },
   },
 });
