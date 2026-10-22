@@ -23,6 +23,8 @@
  *
  * An optional Authorizer decides first whether the caller may use the tool,
  * resource or prompt at all; a denial stops the call before the policy runs.
+ * The lists the agent sees leave out what the authorizer would deny, so the
+ * agent doesn't try it; hiding is a convenience, and every call is still checked.
  *
  * In audit mode (the invoker runs every interceptor with `mode: "audit"`)
  * nothing is stopped or changed: calls the policy would stop are forwarded,
@@ -195,7 +197,7 @@ export class AdtlGateway {
           "if a call is stopped, the result explains why.",
       },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await this.listTools() }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await this.visibleTools() }));
     server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
       const progressToken = req.params._meta?.progressToken;
       const progress =
@@ -206,14 +208,14 @@ export class AdtlGateway {
       return this.callTool(req.params.name, req.params.arguments ?? {}, progress ? { progress } : {});
     });
     if (capabilities.resources) {
-      server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: await this.listResources() }));
+      server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: await this.visibleResources() }));
       server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
         resourceTemplates: await this.listResourceTemplates(),
       }));
       server.setRequestHandler(ReadResourceRequestSchema, async (req) => this.readResource(req.params.uri));
     }
     if (capabilities.prompts) {
-      server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: await this.listPrompts() }));
+      server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: await this.visiblePrompts() }));
       server.setRequestHandler(GetPromptRequestSchema, async (req) => this.getPrompt(req.params.name, req.params.arguments));
     }
     return server;
@@ -240,6 +242,49 @@ export class AdtlGateway {
       }
     }
     return out;
+  }
+
+  /** tools/list as the caller sees it: without the tools the authorizer would deny. */
+  async visibleTools(): Promise<Tool[]> {
+    const tools = await this.listTools();
+    return this.hideDenied(tools, (t) => {
+      const r = this.routes.get(t.name)!;
+      return { event: "tools/call", server: r.upstream, tool: r.tool };
+    });
+  }
+
+  /** prompts/list as the caller sees it. */
+  async visiblePrompts(): Promise<Prompt[]> {
+    const prompts = await this.listPrompts();
+    return this.hideDenied(prompts, (p) => {
+      const r = this.promptRoutes.get(p.name)!;
+      return { event: "prompts/get", server: r.upstream, prompt: r.prompt };
+    });
+  }
+
+  /** resources/list as the caller sees it. A URI several upstreams offer is listed as before (reading it is refused). */
+  async visibleResources(): Promise<Resource[]> {
+    const resources = await this.listResources();
+    return this.hideDenied(resources, (r) => {
+      const ups = this.resourceRoutes.get(r.uri);
+      return ups?.size === 1 ? { event: "resources/read", server: [...ups][0]!, resource: r.uri } : undefined;
+    });
+  }
+
+  /**
+   * Leave out items the authorizer would deny, asked without arguments. Not in
+   * audit mode, which changes nothing. Hiding only saves the agent a denied
+   * call: routes are kept, and a call to a hidden item is still authorized.
+   */
+  private async hideDenied<T>(items: T[], request: (item: T) => Omit<AuthorizationRequest, "principal"> | undefined): Promise<T[]> {
+    if (!this.authorizer || this.invoker.modeOverride === "audit") return items;
+    const shown = await Promise.all(
+      items.map(async (item) => {
+        const r = request(item);
+        return r === undefined || (await this.authorize(r)) === undefined;
+      }),
+    );
+    return items.filter((_, i) => shown[i]);
   }
 
   async listTools(): Promise<Tool[]> {

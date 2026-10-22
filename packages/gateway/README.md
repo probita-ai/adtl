@@ -289,6 +289,7 @@ gateway:
 - A call is allowed if a role the caller belongs to grants it. Once `roles:` is present, everything else is denied.
 - `tools` and `prompts` are `server.name` patterns with `*`, as in policy rules; `resources` are URI patterns. Members are principal ids; `"*"` means everyone, including an anonymous caller.
 - Over stdio the caller is whoever started the gateway, set with `gateway.principal`. Without it the caller is anonymous and only roles with `members: ["*"]` apply (the gateway warns at startup).
+- `tools/list`, `prompts/list` and `resources/list` leave out what the caller may not use, so the agent doesn't try it. Hiding is a convenience, not the security boundary: a call to a hidden tool is still checked and denied. Lists are checked without arguments, and nothing is hidden in audit mode. Resource templates are always listed.
 
 Or your own `Authorizer` in code:
 

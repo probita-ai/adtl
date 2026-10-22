@@ -93,18 +93,24 @@ describe("adtl-gateway with roles", () => {
     const agent = new Client({ name: "agent", version: "0.0.0" });
     await agent.connect(a);
     cleanup.push(() => agent.close());
-    return { call: (name: string, args: Record<string, unknown>) => agent.callTool({ name, arguments: args }) as Promise<CallToolResult>, warnings };
+    return {
+      call: (name: string, args: Record<string, unknown>) => agent.callTool({ name, arguments: args }) as Promise<CallToolResult>,
+      tools: async () => (await agent.listTools()).tools.map((t) => t.name).sort(),
+      warnings,
+    };
   }
 
   const ROLES_YAML = '  roles:\n    maintainers: { members: [alice], tools: ["github.*"] }\n    readers: { members: ["*"], tools: ["github.read_*", "github.list_*"] }\n';
 
   it("lets the configured principal use what its roles grant", async () => {
-    const { call } = await start(`  principal: { id: "\${ADTL_USER}" }\n${ROLES_YAML}`, { ...process.env, ADTL_USER: "alice" });
+    const { call, tools } = await start(`  principal: { id: "\${ADTL_USER}" }\n${ROLES_YAML}`, { ...process.env, ADTL_USER: "alice" });
+    expect(await tools()).toHaveLength(4);
     expect((await call("github__post_comment", { repo: "acme/website", number: 1, body: "hi" })).isError).toBeFalsy();
   });
 
   it("denies other callers, and warns when roles are set without a principal", async () => {
-    const { call, warnings } = await start(ROLES_YAML, process.env);
+    const { call, tools, warnings } = await start(ROLES_YAML, process.env);
+    expect(await tools()).toEqual(["github__list_repos", "github__read_issue"]);
     expect((await call("github__list_repos", {})).isError).toBeFalsy();
     const r = await call("github__post_comment", { repo: "acme/website", number: 1, body: "hi" });
     expect(r.isError).toBe(true);

@@ -4,6 +4,7 @@
 
 ### `@adtl/gateway`
 - Role-based authorization in the config ([#8](https://github.com/probita-ai/adtl/issues/8)): `gateway.roles` grants tools and prompts (`server.name` patterns, as in policy rules) and resources (URI patterns) to principal ids, or to `"*"`. Once present, anything no role grants is denied. Config errors name the role and field.
+- `tools/list`, `prompts/list` and `resources/list` leave out what the authorizer would deny, so the agent doesn't try it ([#13](https://github.com/probita-ai/adtl/issues/13)). Calls are still checked; nothing is hidden in audit mode.
 - `gateway.principal` sets who runs the gateway (`${VAR}` works in its `id`); it is passed to the authorizer and to the interceptors as `context.principal`.
 
 ### `@adtl/interceptors`
