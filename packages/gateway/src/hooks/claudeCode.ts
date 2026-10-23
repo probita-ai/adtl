@@ -49,6 +49,9 @@ export interface HookInput {
   /** PostToolUseFailure: the error the tool returned. */
   error?: unknown;
   cwd?: string;
+  /** Set when the hook fires inside a subagent (or an in-process teammate). */
+  agent_id?: string;
+  agent_type?: string;
 }
 
 export interface HookOptions {
@@ -179,7 +182,9 @@ export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
   if (!route) return NOTHING;
   const config = withClaudeCodePreset(opts.config);
   const ts = new Date().toISOString();
-  const base = { ts, sessionId: input.session_id, event: "tools/call" as const, ...route, via: "claude-code-hook" as const };
+  const agent =
+    typeof input.agent_id === "string" ? { agent: { id: input.agent_id, ...(typeof input.agent_type === "string" ? { type: input.agent_type } : {}) } } : {};
+  const base = { ts, sessionId: input.session_id, event: "tools/call" as const, ...route, via: "claude-code-hook" as const, ...agent };
 
   if (event !== "PreToolUse") {
     const output = input.tool_response ?? input.error ?? null;

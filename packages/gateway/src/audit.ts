@@ -33,6 +33,8 @@ export interface AuditEntry {
   outcome: "forwarded" | "blocked" | "asked" | "upstream_error";
   /** Present when the entry was written by the Claude Code hook rather than the gateway. */
   via?: "claude-code-hook";
+  /** Present when a Claude Code subagent made the call: its id and type (e.g. "Explore"). */
+  agent?: { id: string; type?: string };
   /** The policy's decision. In audit mode a call can be forwarded with decision "ask" or "block". */
   decision?: string;
   /** Present when the gateway ran in audit mode: nothing was stopped or changed. */

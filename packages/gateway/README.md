@@ -255,7 +255,7 @@ What it does:
 - **It shares one session label with the gateway.** Claude Code gives the gateway its session id (`CLAUDE_CODE_SESSION_ID`), and both keep the label in `~/.adtl/sessions/<id>.jsonl` (set `ADTL_SESSIONS_DIR` to change the directory). A `WebFetch` taints the session for `github__add_comment`, and a private file read through the gateway counts against a later `Bash` call. Labels last for the whole Claude Code session, including `--resume`.
 - **It covers MCP servers that skip the gateway**, such as connectors added in claude.ai. Their tools are labeled as their server name (`mcp__<server>__<tool>` → server `<server>`), so you can describe them under `servers:` like any upstream. The gateway's own tools (`mcp__adtl__*`) are skipped; pass `--gateway-server <name>` if you registered the gateway under another name.
 - **It fails closed.** If the hook can't decide, it exits with code 2, which stops the call.
-- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. The config needs no `gateway:` section if you only use the hooks.
+- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. Calls made inside a subagent (the Task tool) carry `"agent": { id, type }`. Their labels count toward the session id Claude Code gives the hook; if that is the parent's id, as the hook docs suggest, a subagent that reads untrusted content taints the parent too. The config needs no `gateway:` section if you only use the hooks.
 
 Built-in labels, which you can override under `servers.claude-code.tools`:
 
