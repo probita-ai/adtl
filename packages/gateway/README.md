@@ -76,7 +76,7 @@ adtl-gateway init -c adtl.yaml --write   # update the file (original kept as adt
 
 `init` connects to each upstream and lists its tools.
 
-- **Presets** cover the GitHub (`github-mcp-server`), filesystem and fetch servers. A preset says what the server's reads and writes mean; the server's `readOnlyHint` decides which tools are reads, so new tools are covered too.
+- **Presets** cover the GitHub (`github-mcp-server`), filesystem and fetch servers, Slack (`@modelcontextprotocol/server-slack` and `slack-mcp-server`) and Gmail (`@gongrzhe/server-gmail-autoauth-mcp`). A preset says what the server's reads and writes mean; the server's `readOnlyHint` decides which tools are reads, so new tools are covered too. For servers without hints, the preset lists their tools by name. Slack messages and email are untrusted and private; posting to Slack is external egress, and so are sending email and Gmail filters, which can forward mail.
 - **Other servers** get rules from their MCP tool hints. Hints only set egress, because they are the server's own claims: every result stays `untrusted` and `private` until you change it. These lines are marked `review`.
 - Entries already in the file are never changed, so you can re-run `init` after a server adds tools. Tools the server no longer offers are reported, not removed.
 - Edits keep your comments, but the YAML may be reformatted slightly (e.g. `[a]` becomes `[ a ]`).

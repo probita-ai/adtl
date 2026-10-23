@@ -39,7 +39,7 @@ The demo runs the same agent twice against a fake GitHub server. Without ADTL th
    npx -y @adtl/gateway init -c adtl.yaml --from .mcp.json --write
    ```
 
-   Presets cover the GitHub, filesystem and fetch servers; other servers get a cautious draft from their MCP tool hints.
+   Presets cover the GitHub, filesystem, fetch, Slack and Gmail servers; other servers get a cautious draft from their MCP tool hints.
 3. Point your agent at the gateway instead of the servers:
 
    ```sh
