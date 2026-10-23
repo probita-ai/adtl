@@ -13,6 +13,16 @@ An MCP gateway for AI agents. It sits between your agent (Claude Code, Cursor, a
 
 It stops attacks like the 2025 GitHub MCP exfiltration, where a public issue told an agent to post private repository contents in a comment.
 
+## Playground
+
+Try it without setting anything up:
+
+```sh
+npx -y @adtl/gateway playground          # opens http://localhost:4317
+```
+
+It runs the real gateway in front of fake GitHub and memory servers, with a page that walks through three test cases (a prompt injection in an issue, an injection remembered in memory and triggered in a later session, and ordinary work), with ADTL on and off. It shows every call's label and decision, the session label, what reached GitHub, approvals as Allow / Deny buttons, the config (edit it and press Apply) and the audit log. It listens on 127.0.0.1 only and keeps everything in a temporary folder. `--port <n>` picks another port; `--no-open` doesn't open the browser.
+
 ## Quick start
 
 1. Describe your tools in `adtl.yaml`:

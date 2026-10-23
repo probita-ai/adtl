@@ -26,7 +26,11 @@ npm run demo
 
 The demo runs the same agent twice against a fake GitHub server. Without ADTL the secret is posted; through the gateway it is blocked. See [examples/github-exfil-demo](examples/github-exfil-demo).
 
-Or click through it in your browser: [playground mock](https://probita-ai.github.io/adtl/playground/) (recorded from real gateway runs; nothing to install).
+Or click through it in your browser: [playground mock](https://probita-ai.github.io/adtl/playground/) (recorded from real gateway runs; nothing to install). To run the real gateway with a web UI, against fake GitHub and memory servers:
+
+```sh
+npx -y @adtl/gateway playground
+```
 
 ## Use it
 
@@ -81,7 +85,7 @@ v0.5 carries labels through memory servers that rewrite what they store ([labels
 
 v0.5.1 keeps record labels through Mem0-style memory servers: `scopeInto` keeps a tainted session's messages out of clean sessions' reference resolution, and each session stamps records under its own key, so an update can't replace a stricter stamp.
 
-v0.6 adds authorization and stronger evidence. Roles in `adtl.yaml` say who may use which tools (and hide the rest from the agent), and policy rules can name who may approve an "ask", each approver on their own channel. Approvals can also come from inside MCP clients that support elicitation. Session receipts, ledger entries and declassifications are signed with a per-machine Ed25519 key, and `init` has presets for Slack and Gmail.
+v0.6 adds authorization and stronger evidence. Roles in `adtl.yaml` say who may use which tools (and hide the rest from the agent), and policy rules can name who may approve an "ask", each approver on their own channel. Approvals can also come from inside MCP clients that support elicitation. Session receipts, ledger entries and declassifications are signed with a per-machine Ed25519 key, `init` has presets for Slack and Gmail, and `npx -y @adtl/gateway playground` opens a local web UI to try it all against fake servers.
 
 Planned next:
 

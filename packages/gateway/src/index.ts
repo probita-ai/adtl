@@ -15,3 +15,4 @@ export * from "./roles.js";
 export * from "./elicitation.js";
 export * from "./receipt.js";
 export * from "./receiptCli.js";
+export * from "./playgroundCli.js";

@@ -60,3 +60,24 @@ for (const bin of ["adtl-gateway", "adtl-interceptors"]) {
   const out = execFileSync("npx", ["--no-install", bin, "--version"], { cwd: app, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   console.log(`npx ${bin} --version → ok`, out.trim());
 }
+
+// The playground ships inside @adtl/gateway: start it from the installed package and fetch its page.
+writeFileSync(
+  join(app, "playground.mjs"),
+  `import { spawn } from "node:child_process";
+const p = spawn("npx", ["--no-install", "adtl-gateway", "playground", "--no-open", "--port", "0"], { stdio: ["ignore", "pipe", "inherit"] });
+let out = "";
+const url = await new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(new Error("playground did not start: " + out)), 30000);
+  p.stdout.on("data", (d) => { out += d; const m = /http:\\/\\/localhost:\\d+/.exec(out); if (m) { clearTimeout(t); resolve(m[0]); } });
+  p.on("exit", (code) => reject(new Error("playground exited with " + code + ": " + out)));
+});
+const html = await (await fetch(url)).text();
+const r = await fetch(url + "/api/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "github__list_repos", args: {} }) });
+const call = await r.json();
+p.kill("SIGINT");
+if (!html.includes("<html") || call.audit?.outcome !== "forwarded") { console.error("FAILED", html.slice(0, 80), call); process.exit(1); }
+console.log("npx adtl-gateway playground → page served, calls go through the gateway ✓");
+`,
+);
+console.log(run("node", ["playground.mjs"], app).trim());
