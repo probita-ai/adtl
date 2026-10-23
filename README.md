@@ -26,6 +26,8 @@ npm run demo
 
 The demo runs the same agent twice against a fake GitHub server. Without ADTL the secret is posted; through the gateway it is blocked. See [examples/github-exfil-demo](examples/github-exfil-demo).
 
+Or click through it in your browser: [playground mock](https://probita-ai.github.io/adtl/playground/) (recorded from real gateway runs; nothing to install).
+
 ## Use it
 
 1. List your MCP servers under `gateway.upstreams` in an `adtl.yaml` (see [the example](examples/adtl.yaml)). If they're already in Claude Code's `.mcp.json`, skip this: step 2 with `--from .mcp.json` imports them.
