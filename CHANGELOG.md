@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — experimental
+
+Authorization and stronger evidence: roles in the config decide who may use which tools, policy rules can name who may approve an "ask", approvals can come from inside the MCP client, and session receipts, ledger entries and declassifications are signed.
+
+### Upgrading
+- No config changes are needed: roles, named approvers and elicitation only apply when you set them.
+- The ledger file gets two columns (`sig`, `signer`) the first time 0.6 opens it; 0.5 can still use it. Entries written before signing are reported as such, not as problems.
+- The first ledger write or receipt creates `~/.adtl/signing-key.pem` (or `ADTL_SIGNING_KEY`).
 
 ### `@adtl/labels`
 - Ed25519 signing keys: `loadOrCreateSigner()` (`~/.adtl/signing-key.pem`, or `ADTL_SIGNING_KEY`; created on first use, mode 0600), `loadSigner()`, `signCanonical()`, `verifyCanonical()`, `verifySignature()`. Public keys are written `ed25519:<base64url>`.

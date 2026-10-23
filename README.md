@@ -79,11 +79,12 @@ v0.5 carries labels through memory servers that rewrite what they store ([labels
 
 v0.5.1 keeps record labels through Mem0-style memory servers: `scopeInto` keeps a tainted session's messages out of clean sessions' reference resolution, and each session stamps records under its own key, so an update can't replace a stricter stamp.
 
+v0.6 adds authorization and stronger evidence. Roles in `adtl.yaml` say who may use which tools (and hide the rest from the agent), and policy rules can name who may approve an "ask", each approver on their own channel. Approvals can also come from inside MCP clients that support elicitation. Session receipts, ledger entries and declassifications are signed with a per-machine Ed25519 key, and `init` has presets for Slack and Gmail.
+
 Planned next:
 
-- **v0.5.x:** role-based authorization in the config, and who may approve an "ask"
-- **v0.6:** labels carried across sub-agents and A2A, signed session receipts, and interop with FIDES
-- **Later:** adapters for existing authorization engines such as Cedar and OpenFGA, and a demo against the real GitHub MCP server
+- **v0.7:** labels carried across sub-agents and A2A, and interop with FIDES
+- **Later:** serving the gateway over Streamable HTTP with logins, adapters for existing authorization engines such as Cedar and OpenFGA, and a demo against the real GitHub MCP server
 
 Help is very welcome: see the [open issues](https://github.com/probita-ai/adtl/issues), especially the ones marked [help wanted](https://github.com/probita-ai/adtl/labels/help%20wanted).
 
