@@ -13,6 +13,16 @@ An MCP gateway for AI agents. It sits between your agent (Claude Code, Cursor, a
 
 It stops attacks like the 2025 GitHub MCP exfiltration, where a public issue told an agent to post private repository contents in a comment.
 
+## Playground
+
+Try it without setting anything up:
+
+```sh
+npx -y @adtl/gateway playground          # opens http://localhost:4317
+```
+
+It runs the real gateway in front of fake GitHub and memory servers, with a page that walks through three test cases (a prompt injection in an issue, an injection remembered in memory and triggered in a later session, and ordinary work), with ADTL on and off. It shows every call's label and decision, the session label, what reached GitHub, approvals as Allow / Deny buttons, the config (edit it and press Apply) and the audit log. It listens on 127.0.0.1 only and keeps everything in a temporary folder. `--port <n>` picks another port; `--no-open` doesn't open the browser.
+
 ## Quick start
 
 1. Describe your tools in `adtl.yaml`:
@@ -76,7 +86,7 @@ adtl-gateway init -c adtl.yaml --write   # update the file (original kept as adt
 
 `init` connects to each upstream and lists its tools.
 
-- **Presets** cover the GitHub (`github-mcp-server`), filesystem and fetch servers. A preset says what the server's reads and writes mean; the server's `readOnlyHint` decides which tools are reads, so new tools are covered too.
+- **Presets** cover the GitHub (`github-mcp-server`), filesystem and fetch servers, Slack (`@modelcontextprotocol/server-slack` and `slack-mcp-server`) and Gmail (`@gongrzhe/server-gmail-autoauth-mcp`). A preset says what the server's reads and writes mean; the server's `readOnlyHint` decides which tools are reads, so new tools are covered too. For servers without hints, the preset lists their tools by name. Slack messages and email are untrusted and private; posting to Slack is external egress, and so are sending email and Gmail filters, which can forward mail.
 - **Other servers** get rules from their MCP tool hints. Hints only set egress, because they are the server's own claims: every result stays `untrusted` and `private` until you change it. These lines are marked `review`.
 - Entries already in the file are never changed, so you can re-run `init` after a server adds tools. Tools the server no longer offers are reported, not removed.
 - Edits keep your comments, but the YAML may be reformatted slightly (e.g. `[a]` becomes `[ a ]`).
@@ -116,8 +126,12 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 | `gateway.approvals` | Ask a human about `ask` decisions. See [Approvals](#approvals). |
 | `gateway.interceptorTimeoutMs` | Timeout per interceptor call (default 5000) |
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
+| `gateway.principal` | Who runs this gateway: `{ id, type?, claims? }`. `${VAR}` works in `id`. Default: anonymous. See [Authorization](#authorization). |
+| `gateway.roles` | Who may use which tools, prompts and resources. Deny by default once present. See [Authorization](#authorization). |
 
 #### Checking the audit log
+
+Each entry lists the interceptors that ran for the call, with the execution policy each ran under, as SEP-2624 asks: `interceptors: [{ name, phase, mode, modeFrom, failOpen, failOpenFrom, failed? }]`, where `*From` is `override` (set by the gateway, e.g. `--audit`) or `default` (declared by the interceptor).
 
 Each line carries `prev`, the hash of the line before, and `hash`, over the line itself. Check the chain with:
 
@@ -125,7 +139,23 @@ Each line carries `prev`, the hash of the line before, and `hash`, over the line
 adtl-gateway audit verify -c adtl.yaml      # or: adtl-gateway audit verify ./adtl-audit.jsonl
 ```
 
-It exits 1 if a line was edited, removed, reordered or inserted, and prints the hash of the last line. Cutting lines off the end is not detected, so note that hash somewhere else if you need to check later. Lines written by 0.4 or earlier are reported as written before the chain. The gateway and the Claude Code hook append through a lock file (`<log>.lock`), so their lines stay in one chain. The hook blocks `Write`/`Edit` on the log and asks before shell commands that mention it. The chain has no secret: an agent with shell access could still rewrite the whole file consistently. Signed session receipts are planned for that ([#26](https://github.com/probita-ai/adtl/issues/26)).
+It exits 1 if a line was edited, removed, reordered or inserted, and prints the hash of the last line. Cutting lines off the end is not detected, so note that hash somewhere else if you need to check later. Lines written by 0.4 or earlier are reported as written before the chain. The gateway and the Claude Code hook append through a lock file (`<log>.lock`), so their lines stay in one chain. The hook blocks `Write`/`Edit` on the log and asks before shell commands that mention it. The chain has no secret: an agent with shell access could still rewrite the whole file consistently. A signed receipt fixes what a session did at the time you take it (see below).
+
+#### Session receipts
+
+A receipt is a signed summary of every call one session made through the gateway and the Claude Code hooks, taken from the audit log: for each call the tool, outcome, decision, approver, call hash, result label and the hash of its log line, plus counts. Arguments and results are never included.
+
+```sh
+adtl-gateway receipt list -c adtl.yaml                     # sessions in the log, newest first
+adtl-gateway receipt <session> -c adtl.yaml -o receipt.json
+adtl-gateway receipt verify receipt.json --log adtl-audit.jsonl --key ed25519:...
+adtl-gateway key                                           # this machine's public key
+```
+
+- Receipts are signed with this machine's Ed25519 key, `~/.adtl/signing-key.pem` (or `ADTL_SIGNING_KEY`), created on first use and readable only by you. `adtl-gateway key` prints the public key to give to whoever checks your receipts.
+- `verify` checks the signature; with `--key`, that your key made it; with `--log`, that the log is intact and the receipt lists every line the session wrote between its first and last call, so a call can't be left out.
+- A receipt is refused if the audit log's chain is broken.
+- The same key signs ledger entries and declassifications (see [Label ledger](#label-ledger)). The Claude Code hook blocks `Write`/`Edit` on the key file and asks before shell commands that mention it. A signature shows which key signed and that nothing changed since; it doesn't stop someone who can read the key, such as an agent with shell access as you, from signing records of their own. Keep the key out of the agent's reach if that matters, for example by pointing `ADTL_SIGNING_KEY` at a file the agent's user can't read.
 
 `${VAR}` in commands, args, env, URLs and headers is read from the environment, so secrets stay out of the file.
 
@@ -158,7 +188,49 @@ How it works and what to know:
 - **Nothing sensitive is sent.** Notifications and emails name the tool, the server and the reason, never the call's arguments or results.
 - **Email never contains approve links,** because mail security scanners open links automatically and would approve calls by themselves.
 - **Mind client timeouts.** Many MCP clients give up on a request after 60 seconds, so the default timeout is 50. The gateway sends progress notifications while it waits, which lets clients that reset their timeout on progress wait longer.
-- **Every outcome is logged.** The audit log records `approval: { outcome, channel, waitedMs }` for each call that was asked.
+- **Every outcome is logged.** The audit log records `approval: { outcome, channel, waitedMs }` for each call that was asked, and `approver` when the answer came from a named approver.
+
+#### Approving in the MCP client
+
+Clients that support MCP elicitation (a server asking the user a question in the client) can show the request in place, so you don't need a phone:
+
+```yaml
+gateway:
+  approvals:
+    elicitation: true     # off by default
+```
+
+- The request appears in the client with Allow and Deny. Allow runs that one call; Deny, declining, dismissing or no answer stops it. The answer goes through the same signed token as a push button, so it can only answer the call it was asked about.
+- If ntfy is configured too, both are asked and the first answer wins. Clients without elicitation support are simply not asked.
+- It's off by default because a client that accepts elicitations by itself, without a person, would approve calls. Turn it on only for clients that always show the prompt to you.
+- It's never used for rules with named approvers: the client can't say who answered.
+
+#### Who may approve
+
+By default, whoever can read the shared topic can approve, and ADTL can't tell who did. A policy rule can name the roles whose members may answer instead. Each member gets their own topic:
+
+```yaml
+policy:
+  rules:
+    - name: no-public-write-after-untrusted
+      when: { session.integrity: untrusted, tool.egress: [public, external, unknown] }
+      then: ask
+      approvers: [security-leads]       # roles from gateway.roles
+
+gateway:
+  roles:
+    security-leads: { members: [alice, bob], tools: ["*.*"] }
+  approvals:
+    approvers:
+      alice: { ntfy: { topic: "${ALICE_NTFY_TOPIC}" } }
+      bob:   { ntfy: { topic: "${BOB_NTFY_TOPIC}" } }
+```
+
+- The request goes only to the approvers' own topics, never to the shared one. Each person's buttons carry tokens signed for them, and an answer counts only if it comes back on that person's reply topic, so the audit log records who approved (`approver: alice`) and nobody else can. Email notices still go out.
+- If several matching rules name approvers, a person may answer only if they are in one of the roles of every rule.
+- The gateway refuses to start if a rule names a role that isn't under `gateway.roles`, a role with member `"*"`, or a member without a channel under `gateway.approvals.approvers`.
+- Rules without `approvers:` use the shared topic as before. One approval is enough; requiring two, and stopping people from approving their own calls, are not supported yet.
+- Under Claude Code's hooks an "ask" goes to Claude Code's own permission prompt, which doesn't know about approvers.
 
 ### Trying a policy safely
 
@@ -193,7 +265,7 @@ What it does:
 - **It shares one session label with the gateway.** Claude Code gives the gateway its session id (`CLAUDE_CODE_SESSION_ID`), and both keep the label in `~/.adtl/sessions/<id>.jsonl` (set `ADTL_SESSIONS_DIR` to change the directory). A `WebFetch` taints the session for `github__add_comment`, and a private file read through the gateway counts against a later `Bash` call. Labels last for the whole Claude Code session, including `--resume`.
 - **It covers MCP servers that skip the gateway**, such as connectors added in claude.ai. Their tools are labeled as their server name (`mcp__<server>__<tool>` → server `<server>`), so you can describe them under `servers:` like any upstream. The gateway's own tools (`mcp__adtl__*`) are skipped; pass `--gateway-server <name>` if you registered the gateway under another name.
 - **It fails closed.** If the hook can't decide, it exits with code 2, which stops the call.
-- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. The config needs no `gateway:` section if you only use the hooks.
+- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. Calls made inside a subagent (the Task tool) carry `"agent": { id, type }`. Their labels count toward the session id Claude Code gives the hook; if that is the parent's id, as the hook docs suggest, a subagent that reads untrusted content taints the parent too. The config needs no `gateway:` section if you only use the hooks.
 
 Built-in labels, which you can override under `servers.claude-code.tools`:
 
@@ -229,7 +301,7 @@ Look after it with:
 
 ```sh
 adtl-gateway ledger stats
-adtl-gateway ledger verify                  # exit 1 if an entry was changed or removed
+adtl-gateway ledger verify                  # exit 1 if an entry was changed, removed, or signed by another key
 adtl-gateway ledger declassify notes.md --reason "checked by hand, no instructions"
                                             # after checking it: clear the label of its current content
 adtl-gateway ledger declassified            # recent declassifications: when, who, what and why
@@ -237,7 +309,7 @@ adtl-gateway ledger declassified            # recent declassifications: when, wh
 
 `--reason` is required. Declassifying is where taint tracking tends to erode, as it turns into a reflex, so each one is kept with who did it, the file and the reason, for review with `declassified`.
 
-Matching is by normalized chunks (whole text, paragraphs, lines of 32+ characters), so text copied into a bigger file still matches, and text the agent rewrote was already recorded with its session's label. Text a person rewrites by hand, binary files, and content an MCP server returns in another encoding (such as base64) are not matched. The Claude Code hook blocks `Write`/`Edit` on the ledger file and asks before shell commands that mention it or `ledger declassify`. Entries are hash-chained, not signed: an agent with shell access could still rebuild the file, which `verify` cannot detect. Signed entries are planned with labels that travel between agents (v0.6).
+Matching is by normalized chunks (whole text, paragraphs, lines of 32+ characters), so text copied into a bigger file still matches, and text the agent rewrote was already recorded with its session's label. Text a person rewrites by hand, binary files, and content an MCP server returns in another encoding (such as base64) are not matched. The Claude Code hook blocks `Write`/`Edit` on the ledger file and asks before shell commands that mention it or `ledger declassify`. Entries are hash-chained and, from 0.6, signed with this machine's key (the same one as [receipts](#session-receipts)), declassifications included, so a reader elsewhere can check who labeled content. `verify` reports entries signed by another key, bad signatures, and unsigned entries after signed ones; entries written before signing are counted, not refused. Someone who can read the key can still sign a rebuilt file.
 
 See [the delayed-injection demo](../../examples/delayed-injection-demo) (`npm run demo:ledger`).
 
@@ -272,7 +344,24 @@ agent ──▶ adtl-gateway ──▶ upstream MCP servers
 
 ### Authorization
 
-Labels and the policy decide whether a call may run given what the session has seen. An `Authorizer` decides before that whether the caller may use the tool, resource or prompt at all. It is a library interface for now; role-based rules in the config are planned ([#8](https://github.com/probita-ai/adtl/issues/8)).
+Labels and the policy decide whether a call may run given what the session has seen. Authorization decides before that whether the caller may use the tool, resource or prompt at all.
+
+Roles in the config:
+
+```yaml
+gateway:
+  principal: { id: "${USER}" }      # who runs this gateway
+  roles:
+    maintainers: { members: [alice, bob], tools: ["github.*"] }
+    readers:     { members: ["*"],        tools: ["github.read_*", "github.get_*"], resources: ["github://acme/website/*"] }
+```
+
+- A call is allowed if a role the caller belongs to grants it. Once `roles:` is present, everything else is denied.
+- `tools` and `prompts` are `server.name` patterns with `*`, as in policy rules; `resources` are URI patterns. Members are principal ids; `"*"` means everyone, including an anonymous caller.
+- Over stdio the caller is whoever started the gateway, set with `gateway.principal`. Without it the caller is anonymous and only roles with `members: ["*"]` apply (the gateway warns at startup).
+- `tools/list`, `prompts/list` and `resources/list` leave out what the caller may not use, so the agent doesn't try it. Hiding is a convenience, not the security boundary: a call to a hidden tool is still checked and denied. Lists are checked without arguments, and nothing is hidden in audit mode. Resource templates are always listed.
+
+Or your own `Authorizer` in code:
 
 ```ts
 import { AdtlGateway, type Authorizer } from "@adtl/gateway";
@@ -300,7 +389,7 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 - Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
 - Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
 - Approvals come from one push channel (ntfy). Other channels, approvals inside the MCP client, and approver roles are planned.
-- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.6). Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
+- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.7). Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
 - The Claude Code hooks label tools by name, not by what they touched: a `Read` of a downloaded file is as trusted as a `Read` of your own code.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.
 

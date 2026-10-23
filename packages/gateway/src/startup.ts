@@ -9,14 +9,16 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { INTERCEPTORS_EXTENSION, LABEL_INTERCEPTOR, POLICY_INTERCEPTOR, parseConfigText } from "@adtl/interceptors";
-import { defaultSessionsDir, type AdtlConfig } from "@adtl/labels";
+import { SIGNING_KEY_ENV, defaultSessionsDir, type AdtlConfig } from "@adtl/labels";
 import { parse as parseYaml } from "yaml";
 import { ZodError } from "zod";
 import { ApprovalBroker, type Notifier } from "./approvals.js";
 import { JsonlAuditLog } from "./audit.js";
+import type { Principal } from "./authorizer.js";
 import {
   GatewayConfigSchema,
   expandApprovals,
+  expandEnv,
   expandUpstream,
   isHttpUpstream,
   type GatewayConfig,
@@ -27,6 +29,7 @@ import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
 import { InterceptorInvoker } from "./invoker.js";
 import { NtfyNotifier } from "./ntfy.js";
+import { RoleAuthorizer } from "./roles.js";
 
 export class GatewayConfigError extends Error {
   constructor(message: string) {
@@ -117,10 +120,54 @@ export function createApprovals(cfg: GatewayConfig, env: NodeJS.ProcessEnv, log:
   if (a.email) {
     notifiers.push(new EmailNotifier({ smtp: a.email.smtp, from: a.email.from, to: [a.email.to].flat(), on: a.email.on }));
   }
-  if (notifiers.length === 0) return undefined;
-  if (!notifiers.some((n) => n.listen)) log.warn('no approval channel can carry answers (configure gateway.approvals.ntfy); "ask" still blocks');
-  log.info(`approvals: ${notifiers.map((n) => n.name).join(", ")} (timeout ${a.timeoutSeconds}s)`);
-  return new ApprovalBroker({ notifiers, timeoutMs: a.timeoutSeconds * 1000, log });
+  const approverChannels = new Map<string, Notifier[]>(
+    Object.entries(a.approvers ?? {}).map(([id, c]) => [id, [new NtfyNotifier({ ...c.ntfy, name: `ntfy:${id}` })]]),
+  );
+  if (notifiers.length === 0 && approverChannels.size === 0 && !a.elicitation) return undefined;
+  if (!notifiers.some((n) => n.listen) && approverChannels.size === 0 && !a.elicitation) {
+    log.warn('no approval channel can carry answers (configure gateway.approvals.ntfy); "ask" still blocks');
+  }
+  const approvers = approverChannels.size ? `; approvers: ${[...approverChannels.keys()].join(", ")}` : "";
+  const shared = [...notifiers.map((n) => n.name), ...(a.elicitation ? ["elicitation (if the client supports it)"] : [])];
+  log.info(`approvals: ${shared.join(", ") || "none shared"}${approvers} (timeout ${a.timeoutSeconds}s)`);
+  return new ApprovalBroker({ notifiers, approverChannels, timeoutMs: a.timeoutSeconds * 1000, log });
+}
+
+/**
+ * Check that every role a policy rule names under `approvers:` exists, has
+ * named members, and that each member has a channel in
+ * `gateway.approvals.approvers`. Returns each such role's members.
+ */
+export function approverRoles(labels: AdtlConfig, cfg: GatewayConfig): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const problems: string[] = [];
+  for (const rule of labels.policy.rules) {
+    for (const role of rule.approvers ?? []) {
+      if (out.has(role)) continue;
+      const r = cfg.roles?.[role];
+      if (!r) {
+        problems.push(`policy rule "${rule.name}" names approver role "${role}", which is not under gateway.roles`);
+        continue;
+      }
+      const members = [...r.members];
+      if (members.includes("*")) problems.push(`approver role "${role}" has member "*": approvers must be named, so the answer says who approved`);
+      for (const m of members.filter((x) => x !== "*")) {
+        if (!cfg.approvals?.approvers?.[m]) problems.push(`approver "${m}" (role "${role}") has no channel under gateway.approvals.approvers`);
+      }
+      out.set(role, members);
+    }
+  }
+  if (problems.length) throw new GatewayConfigError(`approvers:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
+  return out;
+}
+
+/** `gateway.principal`, with `${VAR}` in its id expanded. */
+export function gatewayPrincipal(cfg: GatewayConfig, env: NodeJS.ProcessEnv): Principal | undefined {
+  const p = cfg.principal;
+  if (!p) return undefined;
+  const id = expandEnv(p.id, env, "gateway.principal.id").trim();
+  if (!id) throw new GatewayConfigError("gateway.principal.id is empty after expanding environment variables");
+  return { type: p.type, id, ...(p.claims ? { claims: p.claims } : {}) };
 }
 
 /**
@@ -143,6 +190,8 @@ export async function startGateway(
   opts: { env?: NodeJS.ProcessEnv; logger?: GatewayLogger } = {},
 ): Promise<StartedGateway> {
   const env = opts.env ?? process.env;
+  // Config problems that need no process: fail before starting any.
+  const approverMembers = approverRoles(loaded.labels, loaded.gateway);
   const baseDir = dirname(loaded.path);
   const log = opts.logger ?? { info: (m: string) => console.error(`[adtl-gateway] ${m}`), warn: (m: string) => console.error(`[adtl-gateway] warning: ${m}`) };
   const clients: Client[] = [];
@@ -153,7 +202,10 @@ export async function startGateway(
     const shared = sharedSession(env);
     const custom = loaded.gateway.interceptors && expandUpstream("interceptors", loaded.gateway.interceptors, env);
     // The interceptor process starts with a minimal environment; pass on where the ledger lives.
-    const ledgerEnv: Record<string, string> = env.ADTL_LEDGER ? { ADTL_LEDGER: env.ADTL_LEDGER } : {};
+    const ledgerEnv: Record<string, string> = {
+      ...(env.ADTL_LEDGER ? { ADTL_LEDGER: env.ADTL_LEDGER } : {}),
+      ...(env[SIGNING_KEY_ENV] ? { [SIGNING_KEY_ENV]: env[SIGNING_KEY_ENV]! } : {}),
+    };
     const icfg: StdioUpstream = custom
       ? { ...custom, env: { ...ledgerEnv, ...custom.env, ...(shared ? { ADTL_SESSIONS_DIR: shared.dir } : {}) } }
       : {
@@ -202,12 +254,22 @@ export async function startGateway(
 
     const auditLog = loaded.gateway.audit ? new JsonlAuditLog(resolve(baseDir, loaded.gateway.audit)) : undefined;
     const approvals = createApprovals(loaded.gateway, env, log);
+    const principal = gatewayPrincipal(loaded.gateway, env);
+    const roles = loaded.gateway.roles;
+    if (roles) {
+      log.info(`roles: ${Object.keys(roles).join(", ")} (caller: ${principal?.id ?? "anonymous"})`);
+      if (!principal) log.warn('roles are set but gateway.principal is not: only roles with members ["*"] apply');
+    }
     const gateway = new AdtlGateway({
       ...(shared ? { sessionId: shared.sessionId } : {}),
       upstreams,
       invoker,
       ...(auditLog ? { audit: auditLog } : {}),
       ...(approvals ? { approvals } : {}),
+      ...(roles ? { authorizer: new RoleAuthorizer(roles) } : {}),
+      ...(principal ? { principal } : {}),
+      ...(approverMembers.size ? { approverRoles: approverMembers } : {}),
+      ...(loaded.gateway.approvals?.elicitation ? { elicitApprovals: true } : {}),
       logger: log,
     });
     return { gateway, close: closeAll };

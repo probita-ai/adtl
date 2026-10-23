@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import type { Label } from "@adtl/labels";
+import { loadOrCreateSigner, type Label } from "@adtl/labels";
 import { Ledger, MIN_CHUNK_CHARS, chunkHashes, defaultLedgerPath, isClean, normalize, textLeaves, valueHashes } from "../src/index.js";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
@@ -123,5 +123,54 @@ describe("Ledger", () => {
   it("defaults to ADTL_LEDGER or ~/.adtl/ledger.db", () => {
     expect(defaultLedgerPath({ ADTL_LEDGER: "/x/l.db" })).toBe("/x/l.db");
     expect(defaultLedgerPath({})).toMatch(/\.adtl[\\/]ledger\.db$/);
+  });
+});
+
+describe("signed entries", () => {
+  const signer = () => loadOrCreateSigner(join(mkdtempSync(join(tmpdir(), "adtl-ledger-key-")), "key.pem"));
+
+  it("signs every entry, including declassifications, and verifies them", () => {
+    const path = tempPath();
+    const s = signer();
+    const l = new Ledger(path, { signer: s });
+    l.record(chunkHashes(INJECTION), tainted, "mon");
+    l.declassify(chunkHashes(INJECTION), "user:me", "checked");
+    expect(l.verify()).toEqual({ ok: true, entries: 2, signed: 2, unsigned: 0 });
+    const db = new DatabaseSync(path);
+    const rows = db.prepare("SELECT kind, sig, signer FROM entries").all() as { kind: string; sig: string; signer: string }[];
+    db.close();
+    expect(rows.map((r) => r.kind)).toEqual(["record", "clear"]);
+    expect(rows.every((r) => r.signer === s.publicKey && r.sig.length > 0)).toBe(true);
+  });
+
+  it("detects a bad signature, an unknown signer, and unsigned entries after signed ones", () => {
+    const path = tempPath();
+    const mine = signer();
+    new Ledger(path, { signer: mine }).record(chunkHashes(INJECTION), tainted, "mon");
+
+    // Someone else's key signs the next entry; this machine trusts only its own.
+    new Ledger(path, { signer: signer() }).record(chunkHashes(`${INJECTION} again, from elsewhere`), tainted, "tue");
+    expect(new Ledger(path, { signer: mine }).verify()).toMatchObject({ ok: false, problem: expect.stringContaining("signed by an unknown key") });
+
+    const path2 = tempPath();
+    new Ledger(path2, { signer: mine }).record(chunkHashes(INJECTION), tainted, "mon");
+    const db = new DatabaseSync(path2);
+    db.prepare("UPDATE entries SET sig = ?").run(mine.sign("something else"));
+    db.close();
+    expect(new Ledger(path2, { signer: mine }).verify()).toMatchObject({ ok: false, problem: expect.stringContaining("bad signature") });
+
+    const path3 = tempPath();
+    new Ledger(path3, { signer: mine }).record(chunkHashes(INJECTION), tainted, "mon");
+    new Ledger(path3).record(chunkHashes(`${INJECTION} unsigned`), tainted, "tue");
+    expect(new Ledger(path3, { signer: mine }).verify()).toMatchObject({ ok: false, problem: expect.stringContaining("unsigned, after signed entries") });
+  });
+
+  it("accepts entries written before signing, and adds the columns to an old ledger", () => {
+    const path = tempPath();
+    new Ledger(path).record(chunkHashes(INJECTION), tainted, "mon");
+    const s = signer();
+    const l = new Ledger(path, { signer: s });
+    l.record(chunkHashes(`${INJECTION} later`), tainted, "tue");
+    expect(l.verify()).toEqual({ ok: true, entries: 2, signed: 1, unsigned: 1 });
   });
 });

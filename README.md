@@ -26,6 +26,12 @@ npm run demo
 
 The demo runs the same agent twice against a fake GitHub server. Without ADTL the secret is posted; through the gateway it is blocked. See [examples/github-exfil-demo](examples/github-exfil-demo).
 
+Or click through it in your browser: [playground mock](https://probita-ai.github.io/adtl/playground/) (recorded from real gateway runs; nothing to install). To run the real gateway with a web UI, against fake GitHub and memory servers:
+
+```sh
+npx -y @adtl/gateway playground
+```
+
 ## Use it
 
 1. List your MCP servers under `gateway.upstreams` in an `adtl.yaml` (see [the example](examples/adtl.yaml)). If they're already in Claude Code's `.mcp.json`, skip this: step 2 with `--from .mcp.json` imports them.
@@ -39,7 +45,7 @@ The demo runs the same agent twice against a fake GitHub server. Without ADTL th
    npx -y @adtl/gateway init -c adtl.yaml --from .mcp.json --write
    ```
 
-   Presets cover the GitHub, filesystem and fetch servers; other servers get a cautious draft from their MCP tool hints.
+   Presets cover the GitHub, filesystem, fetch, Slack and Gmail servers; other servers get a cautious draft from their MCP tool hints.
 3. Point your agent at the gateway instead of the servers:
 
    ```sh
@@ -79,11 +85,12 @@ v0.5 carries labels through memory servers that rewrite what they store ([labels
 
 v0.5.1 keeps record labels through Mem0-style memory servers: `scopeInto` keeps a tainted session's messages out of clean sessions' reference resolution, and each session stamps records under its own key, so an update can't replace a stricter stamp.
 
+v0.6 adds authorization and stronger evidence. Roles in `adtl.yaml` say who may use which tools (and hide the rest from the agent), and policy rules can name who may approve an "ask", each approver on their own channel. Approvals can also come from inside MCP clients that support elicitation. Session receipts, ledger entries and declassifications are signed with a per-machine Ed25519 key, `init` has presets for Slack and Gmail, and `npx -y @adtl/gateway playground` opens a local web UI to try it all against fake servers.
+
 Planned next:
 
-- **v0.5.x:** role-based authorization in the config, and who may approve an "ask"
-- **v0.6:** labels carried across sub-agents and A2A, signed session receipts, and interop with FIDES
-- **Later:** adapters for existing authorization engines such as Cedar and OpenFGA, and a demo against the real GitHub MCP server
+- **v0.7:** labels carried across sub-agents and A2A, and interop with FIDES
+- **Later:** serving the gateway over Streamable HTTP with logins, adapters for existing authorization engines such as Cedar and OpenFGA, and a demo against the real GitHub MCP server
 
 Help is very welcome: see the [open issues](https://github.com/probita-ai/adtl/issues), especially the ones marked [help wanted](https://github.com/probita-ai/adtl/labels/help%20wanted).
 

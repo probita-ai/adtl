@@ -34,6 +34,42 @@ describe("presets", () => {
     expect(choosePreset("gh", "github-mcp-server")?.id).toBe("github");
     expect(choosePreset("github", "something-else")?.id).toBe("github");
     expect(choosePreset("mystery", "mystery-server")).toBeUndefined();
+    expect(choosePreset("chat", "Slack MCP Server")?.id).toBe("slack");
+    expect(choosePreset("mail", "gmail")?.id).toBe("gmail");
+  });
+
+  it("labels the reference Slack server by tool name, and korotovsky's by its hints", () => {
+    const reference = suggest({
+      id: "slack",
+      serverName: "Slack MCP Server",
+      tools: [{ name: "slack_get_channel_history" }, { name: "slack_post_message" }],
+    });
+    expect(reference.tools.map((t) => [t.name, t.rule])).toEqual([
+      ["slack_get_channel_history", { integrity: "untrusted", confidentiality: "private", egress: "internal" }],
+      ["slack_post_message", { integrity: "trusted", confidentiality: "public", egress: "external" }],
+    ]);
+    const korotovsky = suggest({
+      id: "slack",
+      serverName: "Slack MCP Server",
+      tools: [
+        { name: "conversations_history", annotations: { readOnlyHint: true } },
+        { name: "conversations_add_message", annotations: { destructiveHint: true } },
+      ],
+    });
+    expect(korotovsky.tools.map((t) => [t.name, t.rule.egress, t.rule.integrity])).toEqual([
+      ["conversations_history", "internal", "untrusted"],
+      ["conversations_add_message", "external", undefined],
+    ]);
+  });
+
+  it("treats Gmail sending and forwarding filters as external egress, and mail as untrusted", () => {
+    const s = suggest({ id: "gmail", serverName: "gmail", tools: [{ name: "read_email" }, { name: "send_email" }, { name: "create_filter" }, { name: "draft_email" }] });
+    expect(Object.fromEntries(s.tools.map((t) => [t.name, t.rule]))).toMatchObject({
+      read_email: { integrity: "untrusted", confidentiality: "private" },
+      send_email: { egress: "external" },
+      create_filter: { egress: "external" },
+      draft_email: { egress: "internal" },
+    });
   });
 
   it("split tools into reads and writes by readOnlyHint", () => {

@@ -1,0 +1,40 @@
+# Labels and policy for the playground. Edit them in the UI and press Apply.
+# The playground adds the ledger and gateway sections itself (fake GitHub and
+# fake memory servers, a throwaway ledger and audit log).
+
+defaults:
+  integrity: untrusted
+  confidentiality: private
+
+servers:
+  github:
+    acceptServerClaims: false
+    tools:
+      read_issue:   { integrity: untrusted, confidentiality: public,  egress: none }    # anyone can write issues
+      get_file:     { integrity: trusted,   confidentiality: private, egress: none }    # private repo contents
+      list_repos:   { integrity: trusted,   confidentiality: public,  egress: none }
+      post_comment: { integrity: trusted,   confidentiality: public,  egress: public }  # result is just "posted"
+  memory:
+    tools:
+      add_memory:    { integrity: trusted, confidentiality: public, egress: internal, labelInto: metadata }
+      update_memory: { integrity: trusted, confidentiality: public, egress: internal, labelInto: metadata }
+      search_memory: { integrity: trusted, confidentiality: public, egress: none, readLabels: true }
+      get_memory:    { integrity: trusted, confidentiality: public, egress: none, readLabels: true }
+      consolidate:   { integrity: untrusted, confidentiality: private, egress: internal }  # merged records lose their stamps
+
+policy:
+  default: allow
+  rules:
+    - name: no-public-write-after-untrusted
+      when:
+        session.integrity: untrusted
+        tool.egress: [public, external, unknown]
+      then: ask
+      reason: Session has read untrusted content; confirm before writing anywhere public
+
+    - name: private-stays-private
+      when:
+        session.confidentiality: [private, secret]
+        tool.egress: public
+      then: block
+      reason: Private data must not reach a public tool

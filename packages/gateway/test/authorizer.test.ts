@@ -127,4 +127,26 @@ describe("authorizer", () => {
     expect(authz.seen[1]?.arguments).toEqual({ number: "1" });
     expect(audit.entries.map((e) => e.outcome)).toEqual(["blocked", "blocked"]);
   });
+
+  it("lists only the tools the caller may use, and still checks a call to a hidden one", async () => {
+    const { agent, call } = await setup(new ToolList(["read_issue", "list_repos"]));
+    expect((await agent.listTools()).tools.map((t) => t.name).sort()).toEqual(["github__list_repos", "github__read_issue"]);
+    const r = await call("github__post_comment", { repo: "acme/website", number: 1, body: "hi" });
+    expect(r.content[0]).toMatchObject({ text: expect.stringContaining("may not use post_comment") });
+  });
+
+  it("hides prompts and resources the caller may not use", async () => {
+    const { agent } = await setup(new ToolList(["github://acme/website/README.md"]));
+    expect((await agent.listResources()).resources.map((r) => r.uri)).toEqual(["github://acme/website/README.md"]);
+    expect((await agent.listPrompts()).prompts).toEqual([]);
+    const { agent: other } = await setup(new ToolList(["triage_issue"]));
+    expect((await other.listPrompts()).prompts.map((p) => p.name)).toEqual(["github__triage_issue"]);
+    expect((await other.listResources()).resources).toEqual([]);
+  });
+
+  it("hides nothing in audit mode", async () => {
+    const { agent } = await setup(new ToolList([]), { mode: "audit" });
+    expect((await agent.listTools()).tools).toHaveLength(4);
+  });
 });
+

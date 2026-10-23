@@ -124,6 +124,19 @@ describe("adtl-gateway", () => {
     expect(JSON.stringify(audit.entries)).not.toContain("hunter2");
   });
 
+  it("logs every interceptor run with its resolved mode and failOpen (SEP-2624)", async () => {
+    const { call, audit } = await setup();
+    await call("github__list_repos", {});
+    expect(audit.entries[0]?.interceptors).toEqual([
+      { name: "adtl.label", phase: "request", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default" },
+      { name: "adtl.policy", phase: "request", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default" },
+      { name: "adtl.label", phase: "response", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default" },
+    ]);
+    const audited = await setup({ mode: "audit" });
+    await audited.call("github__list_repos", {});
+    expect(audited.audit.entries[0]?.interceptors?.every((r) => r.mode === "audit" && r.modeFrom === "override")).toBe(true);
+  });
+
   it("returns an error result for unknown tools", async () => {
     const { call } = await setup();
     const r = await call("github__nope", {});
@@ -140,11 +153,12 @@ describe("adtl-gateway", () => {
       if (p.name === "adtl.policy") throw new Error("boom");
       return original(p);
     };
-    const { call, posted } = await setup({ interceptorsServer: createInterceptorServer(core) });
+    const { call, posted, audit } = await setup({ interceptorsServer: createInterceptorServer(core) });
     const r = await call("github__post_comment", { repo: "acme/website", number: 1, body: "hi" });
     expect(r.isError).toBe(true);
     expect(textOf(r)).toContain("adtl.policy failed");
     expect(posted).toHaveLength(0);
+    expect(audit.entries[0]?.interceptors).toContainEqual(expect.objectContaining({ name: "adtl.policy", failOpen: false, failed: true }));
   });
 
   describe("approvals", () => {

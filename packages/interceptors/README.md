@@ -21,7 +21,7 @@ The server speaks MCP over stdio. It declares `capabilities.extensions["io.model
 
 ## Invocation details
 
-- `config.server` (required): the upstream server id, as named under `servers:` in the config
+- `config.server`: the upstream server id, as named under `servers:` in the config. Without it, `context.target` is used (SEP-2624: without config, an interceptor's defaults apply); with neither, the call is rejected.
 - `context.sessionId`: the session whose labels are read and updated. Without it, `adtl.policy` blocks (fails closed).
 - `context.target`: the upstream server the call goes to. It is part of the call binding hash, so set it.
 - `ask` and `block` are returned as `valid: false, severity: "error"`, with `info["adtl/decision"]` set to `"ask"` or `"block"`. An `ask` also carries `confirmation: { id, reason, callHash, expiresAt, token }`, following the proposal in [experimental-ext-interceptors#45](https://github.com/modelcontextprotocol/experimental-ext-interceptors/pull/45). `callHash` covers `{ event, phase, target, payload }`. An invoker that doesn't implement confirmations blocks the call.

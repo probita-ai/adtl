@@ -18,6 +18,7 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { digest, sha256Hex } from "@adtl/labels";
+import type { InterceptorRun } from "./invoker.js";
 
 export interface AuditEntry {
   ts: string;
@@ -32,6 +33,8 @@ export interface AuditEntry {
   outcome: "forwarded" | "blocked" | "asked" | "upstream_error";
   /** Present when the entry was written by the Claude Code hook rather than the gateway. */
   via?: "claude-code-hook";
+  /** Present when a Claude Code subagent made the call: its id and type (e.g. "Explore"). */
+  agent?: { id: string; type?: string };
   /** The policy's decision. In audit mode a call can be forwarded with decision "ask" or "block". */
   decision?: string;
   /** Present when the gateway ran in audit mode: nothing was stopped or changed. */
@@ -49,6 +52,8 @@ export interface AuditEntry {
   /** Present when the result carried record label stamps: how many, and which sessions wrote them. */
   records?: unknown;
   sessionLabel?: unknown;
+  /** Every interceptor invocation for this call, with its resolved mode and failOpen and where each came from (SEP-2624). */
+  interceptors?: InterceptorRun[];
   warnings?: string[];
   durationMs: number;
 }

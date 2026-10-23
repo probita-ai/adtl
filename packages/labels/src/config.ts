@@ -80,8 +80,11 @@ export const PolicyRuleSchema = z
       .strict(),
     then: z.enum(DECISIONS),
     reason: z.string().optional(),
+    /** For `then: ask`: roles (from `gateway.roles`) whose members may answer. Default: whoever the shared channel reaches. */
+    approvers: z.array(z.string().min(1)).nonempty().optional(),
   })
-  .strict();
+  .strict()
+  .refine((r) => r.approvers === undefined || r.then === "ask", { message: 'approvers only applies to rules with then: ask', path: ["approvers"] });
 export type PolicyRule = z.infer<typeof PolicyRuleSchema>;
 
 export const PolicySchema = z

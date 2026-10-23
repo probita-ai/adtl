@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.test.json",
     "demo": "npm run build && node examples/github-exfil-demo/demo.mjs",
     "test:pack": "npm run build && node scripts/pack-test.mjs",
-    "demo:ledger": "npm run build && node examples/delayed-injection-demo/demo.mjs"
+    "demo:ledger": "npm run build && node examples/delayed-injection-demo/demo.mjs",
+    "playground": "npm run build && node packages/gateway/dist/cli.js playground"
   },
   "repository": {
     "type": "git",

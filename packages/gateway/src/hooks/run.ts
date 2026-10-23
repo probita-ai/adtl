@@ -8,7 +8,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { FileSessionStore, defaultSessionsDir } from "@adtl/labels";
+import { FileSessionStore, defaultSessionsDir, defaultSigningKeyPath, trySigner } from "@adtl/labels";
 import { Ledger, defaultLedgerPath } from "@adtl/ledger";
 import { parseConfigText } from "@adtl/interceptors";
 import { parse as parseYaml } from "yaml";
@@ -38,7 +38,10 @@ export async function runHook(opts: RunHookOptions): Promise<HookOutcome> {
     const env = opts.env ?? process.env;
     const sessionsDir = defaultSessionsDir(env);
     const ledgerPath = config.ledger.path ? resolve(dirname(path), config.ledger.path) : defaultLedgerPath(env);
-    const ledger = config.ledger.enabled ? new Ledger(ledgerPath, { retentionDays: config.ledger.retentionDays }) : undefined;
+    const signer = config.ledger.enabled ? trySigner(defaultSigningKeyPath(env)) : undefined;
+    const ledger = config.ledger.enabled
+      ? new Ledger(ledgerPath, { retentionDays: config.ledger.retentionDays, ...(signer ? { signer } : {}) })
+      : undefined;
     const auditPath = typeof gw.audit === "string" ? resolve(dirname(path), gw.audit) : undefined;
     return handleHook(input, {
       config,
@@ -47,7 +50,7 @@ export async function runHook(opts: RunHookOptions): Promise<HookOutcome> {
       ...(opts.gatewayServer ? { gatewayServer: opts.gatewayServer } : {}),
       mode: gw.mode === "audit" ? "audit" : "active",
       ...(auditPath ? { audit: new JsonlAuditLog(auditPath) } : {}),
-      protect: { configPath: path, sessionsDir, ledgerPath, ...(auditPath ? { auditPath } : {}) },
+      protect: { configPath: path, sessionsDir, ledgerPath, ...(auditPath ? { auditPath } : {}), signingKeyPath: defaultSigningKeyPath(env) },
     });
   } catch (err) {
     return failure(input.hook_event_name, (err as Error).message);

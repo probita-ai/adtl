@@ -23,6 +23,8 @@
  *
  * An optional Authorizer decides first whether the caller may use the tool,
  * resource or prompt at all; a denial stops the call before the policy runs.
+ * The lists the agent sees leave out what the authorizer would deny, so the
+ * agent doesn't try it; hiding is a convenience, and every call is still checked.
  *
  * In audit mode (the invoker runs every interceptor with `mode: "audit"`)
  * nothing is stopped or changed: calls the policy would stop are forwarded,
@@ -54,12 +56,13 @@ import {
 import type { InvocationContext } from "@adtl/interceptors";
 import { callBindingHash } from "@adtl/labels";
 import type { ApprovalBroker, ApprovalResult } from "./approvals.js";
+import { ElicitationChannel, supportsElicitation } from "./elicitation.js";
 import type { AuditEntry, AuditSink } from "./audit.js";
 import { authorize, type AuthorizationRequest, type Authorizer, type Denial, type Principal } from "./authorizer.js";
 import { TOOL_SEPARATOR } from "./config.js";
-import type { Blocked, PhaseOutcome, InterceptorInvoker } from "./invoker.js";
+import type { Blocked, InterceptorInvoker, InterceptorRun, PhaseOutcome } from "./invoker.js";
 
-export const GATEWAY_VERSION = "0.5.1";
+export const GATEWAY_VERSION = "0.6.0";
 
 /** `_meta` key on gateway-generated error results describing why a call was stopped. */
 export const GATEWAY_DECISION_KEY = "adtl/gateway";
@@ -108,6 +111,20 @@ export interface AdtlGatewayOptions {
   authorizer?: Authorizer;
   /** The caller, passed to the authorizer and the interceptors. Default: anonymous. */
   principal?: Principal;
+  /** Members of each role that policy rules name as `approvers:`. */
+  approverRoles?: Map<string, string[]>;
+  /** Also ask for approval in the MCP client, when it supports elicitation. */
+  elicitApprovals?: boolean;
+}
+
+/**
+ * Who may answer an "ask" whose rules name approver roles: someone in one of
+ * the roles of every list. Sorted, for stable notifications and tests.
+ */
+export function eligibleApprovers(lists: string[][], roles: Map<string, string[]>): string[] {
+  const sets = lists.map((list) => new Set(list.flatMap((role) => roles.get(role) ?? [])));
+  const [first, ...rest] = sets;
+  return [...(first ?? [])].filter((id) => id !== "*" && rest.every((s) => s.has(id))).sort();
 }
 
 export interface CallOptions {
@@ -157,6 +174,10 @@ export class AdtlGateway {
   private readonly approvals: ApprovalBroker | undefined;
   private readonly authorizer: Authorizer | undefined;
   private readonly principal: Principal;
+  private readonly approverRoles: Map<string, string[]>;
+  private readonly elicitApprovals: boolean;
+  /** The server the agent is connected to, for elicitation. */
+  private server: Server | undefined;
   private routes = new Map<string, Route>();
   private promptRoutes = new Map<string, PromptRoute>();
   /** Resource URI → the upstreams that list it. */
@@ -172,6 +193,8 @@ export class AdtlGateway {
     this.approvals = opts.approvals;
     this.authorizer = opts.authorizer;
     this.principal = opts.principal ?? { type: "anonymous" };
+    this.approverRoles = opts.approverRoles ?? new Map();
+    this.elicitApprovals = opts.elicitApprovals === true;
   }
 
   /** Ask the authorizer, if any. Returns the denial; in audit mode the caller logs it and carries on. */
@@ -195,7 +218,7 @@ export class AdtlGateway {
           "if a call is stopped, the result explains why.",
       },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await this.listTools() }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await this.visibleTools() }));
     server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
       const progressToken = req.params._meta?.progressToken;
       const progress =
@@ -206,16 +229,17 @@ export class AdtlGateway {
       return this.callTool(req.params.name, req.params.arguments ?? {}, progress ? { progress } : {});
     });
     if (capabilities.resources) {
-      server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: await this.listResources() }));
+      server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: await this.visibleResources() }));
       server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
         resourceTemplates: await this.listResourceTemplates(),
       }));
       server.setRequestHandler(ReadResourceRequestSchema, async (req) => this.readResource(req.params.uri));
     }
     if (capabilities.prompts) {
-      server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: await this.listPrompts() }));
+      server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: await this.visiblePrompts() }));
       server.setRequestHandler(GetPromptRequestSchema, async (req) => this.getPrompt(req.params.name, req.params.arguments));
     }
+    this.server = server;
     return server;
   }
 
@@ -240,6 +264,49 @@ export class AdtlGateway {
       }
     }
     return out;
+  }
+
+  /** tools/list as the caller sees it: without the tools the authorizer would deny. */
+  async visibleTools(): Promise<Tool[]> {
+    const tools = await this.listTools();
+    return this.hideDenied(tools, (t) => {
+      const r = this.routes.get(t.name)!;
+      return { event: "tools/call", server: r.upstream, tool: r.tool };
+    });
+  }
+
+  /** prompts/list as the caller sees it. */
+  async visiblePrompts(): Promise<Prompt[]> {
+    const prompts = await this.listPrompts();
+    return this.hideDenied(prompts, (p) => {
+      const r = this.promptRoutes.get(p.name)!;
+      return { event: "prompts/get", server: r.upstream, prompt: r.prompt };
+    });
+  }
+
+  /** resources/list as the caller sees it. A URI several upstreams offer is listed as before (reading it is refused). */
+  async visibleResources(): Promise<Resource[]> {
+    const resources = await this.listResources();
+    return this.hideDenied(resources, (r) => {
+      const ups = this.resourceRoutes.get(r.uri);
+      return ups?.size === 1 ? { event: "resources/read", server: [...ups][0]!, resource: r.uri } : undefined;
+    });
+  }
+
+  /**
+   * Leave out items the authorizer would deny, asked without arguments. Not in
+   * audit mode, which changes nothing. Hiding only saves the agent a denied
+   * call: routes are kept, and a call to a hidden item is still authorized.
+   */
+  private async hideDenied<T>(items: T[], request: (item: T) => Omit<AuthorizationRequest, "principal"> | undefined): Promise<T[]> {
+    if (!this.authorizer || this.invoker.modeOverride === "audit") return items;
+    const shown = await Promise.all(
+      items.map(async (item) => {
+        const r = request(item);
+        return r === undefined || (await this.authorize(r)) === undefined;
+      }),
+    );
+    return items.filter((_, i) => shown[i]);
   }
 
   async listTools(): Promise<Tool[]> {
@@ -374,6 +441,7 @@ export class AdtlGateway {
     const config = { server: upstream };
     const audit = this.invoker.modeOverride === "audit" ? { mode: "audit" as const } : {};
     let denied: Denial | undefined;
+    const ran: InterceptorRun[] = [];
     const finish = (entry: Pick<AuditEntry, "outcome"> & Partial<AuditEntry>) =>
       this.audit?.write({
         ts: context.timestamp!,
@@ -383,6 +451,7 @@ export class AdtlGateway {
         ...target,
         ...(denied ? { denied } : {}),
         ...entry,
+        ...(ran.length ? { interceptors: [...ran] } : {}),
         durationMs: Math.round(performance.now() - started),
       });
     const what = "resource" in target ? `resource ${target.resource}` : `prompt ${upstream}${TOOL_SEPARATOR}${target.prompt}`;
@@ -401,6 +470,7 @@ export class AdtlGateway {
     if (denied) this.log.info(`audit: would deny ${what}: ${denied.reason}`);
 
     const req = await this.invoker.runRequest({ event, payload: { method: event, params }, config, context });
+    ran.push(...req.ran);
     if (req.blocked) {
       finish({ outcome: "blocked", decision: req.blocked.decision, reason: req.blocked.reason, warnings: req.warnings });
       this.log.info(`${req.blocked.decision} ${what}: ${req.blocked.reason}`);
@@ -417,6 +487,7 @@ export class AdtlGateway {
     }
 
     const res = await this.invoker.runResponse({ event, payload: { method: event, params: forwarded, result }, config, context });
+    ran.push(...res.ran);
     const warnings = [...req.warnings, ...res.warnings];
     if (res.blocked) {
       // Fail closed: unlabeled content must not reach the agent.
@@ -452,8 +523,16 @@ export class AdtlGateway {
     };
     const base = { sessionId: this.sessionId, event: "tools/call" as const, server: route.upstream, tool: route.tool };
     let denied: Denial | undefined;
+    const ran: InterceptorRun[] = [];
     const finish = (entry: Omit<AuditEntry, keyof typeof base | "ts" | "durationMs">) =>
-      this.audit?.write({ ts: context.timestamp!, ...base, ...(denied ? { denied } : {}), ...entry, durationMs: Math.round(performance.now() - started) });
+      this.audit?.write({
+        ts: context.timestamp!,
+        ...base,
+        ...(denied ? { denied } : {}),
+        ...entry,
+        ...(ran.length ? { interceptors: [...ran] } : {}),
+        durationMs: Math.round(performance.now() - started),
+      });
 
     // 0. Authorization: may this caller use this tool at all? A denial wins over any policy decision.
     denied = await this.authorize({ event: "tools/call", server: route.upstream, tool: route.tool, arguments: args });
@@ -472,6 +551,7 @@ export class AdtlGateway {
     // 1. Request phase: adtl.policy decides whether the call may run.
     const requestPayload = { method: "tools/call", params: { name: route.tool, arguments: args } };
     let req = await this.invoker.runRequest({ event: "tools/call", payload: requestPayload, config, context });
+    ran.push(...req.ran);
     const policy = infoOf(req, "adtl.policy");
     let approval: ApprovalResult | undefined;
     if (req.blocked) {
@@ -481,8 +561,12 @@ export class AdtlGateway {
       const stopped = { decision: b.decision, reason: b.reason, matched: policy.matched, callHash: policy.callHash, sessionLabel: policy.sessionLabel };
       const matched = Array.isArray(policy.matched) ? (policy.matched as string[]) : [];
       const hash = b.confirmation?.callHash ?? policy.callHash;
-      if (b.decision === "ask" && this.approvals?.canApprove && typeof hash === "string") {
-        this.log.info(`ask ${name}: waiting for approval (${b.reason})`);
+      const lists = Array.isArray(policy.approvers) ? (policy.approvers as string[][]) : undefined;
+      const approvers = lists ? eligibleApprovers(lists, this.approverRoles) : undefined;
+      // The client's own prompt, if enabled and supported; never for named approvers (it can't say who answered).
+      const elicit = this.elicitApprovals && !approvers && this.server && supportsElicitation(this.server) ? [new ElicitationChannel(this.server)] : [];
+      if (b.decision === "ask" && this.approvals && (this.approvals.canApprove || elicit.length > 0) && typeof hash === "string") {
+        this.log.info(`ask ${name}: waiting for approval${approvers ? ` from ${approvers.join(", ") || "nobody"}` : ""} (${b.reason})`);
         approval = await this.waitForApproval(opts, () =>
           this.approvals!.request({
             sessionId: this.sessionId,
@@ -492,7 +576,8 @@ export class AdtlGateway {
             reason: b.reason,
             matched,
             ...(policy.sessionLabel !== undefined ? { sessionLabel: policy.sessionLabel } : {}),
-          }),
+            ...(approvers ? { approvers } : {}),
+          }, elicit),
         );
         this.log.info(`ask ${name}: ${approval.outcome}`);
         if (approval.outcome !== "approved") {
@@ -511,6 +596,7 @@ export class AdtlGateway {
             ...(approval.approver ? { principal: { type: "user" as const, id: approval.approver } } : {}),
           }];
           req = await this.invoker.runRequest({ event: "tools/call", payload: requestPayload, config, context: { ...context, confirmations } });
+          ran.push(...req.ran);
           const sent = callBindingHash({ event: "tools/call", phase: "request", target: route.upstream, payload: req.payload });
           const recheck = req.blocked?.reason ?? (sent !== c.callHash ? "the call changed after it was approved" : undefined);
           if (recheck !== undefined) {
@@ -554,6 +640,7 @@ export class AdtlGateway {
       config,
       context,
     });
+    ran.push(...res.ran);
     if (res.blocked) {
       // Fail closed: an unlabeled result must not reach the agent.
       finish({ outcome: "blocked", decision: res.blocked.decision, reason: res.blocked.reason, callHash: policy.callHash, warnings: [...req.warnings, ...res.warnings] });
