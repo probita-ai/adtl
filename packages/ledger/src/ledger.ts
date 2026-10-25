@@ -12,7 +12,10 @@
  *
  * Entries are hash-chained (each entry hashes the previous one), so `verify`
  * detects edited or deleted entries. Pruning old entries keeps the chain
- * verifiable by remembering the hash of the last pruned entry.
+ * verifiable by remembering the hash of the last pruned entry. With a signer,
+ * each entry also carries an Ed25519 signature over its hash and the signer's
+ * public key, so `verify` also detects entries signed by an unknown key, and
+ * a reader elsewhere can check who labeled the content.
  *
  * Several processes may use one file at once (gateway, interceptors, Claude
  * Code hooks); writes are serialized by SQLite with a busy timeout.
@@ -23,7 +26,7 @@ import { homedir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
-import { CONFIDENTIALITY_LEVELS, INTEGRITY_LEVELS, join as joinLabels, type Label, type Origin } from "@adtl/labels";
+import { CONFIDENTIALITY_LEVELS, INTEGRITY_LEVELS, join as joinLabels, verifySignature, type Label, type Origin, type Signer } from "@adtl/labels";
 
 // Loaded at runtime: some bundlers and test runners don't know node:sqlite is a builtin yet.
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
@@ -37,6 +40,10 @@ export interface LedgerOptions {
   /** Entries older than this are pruned (at most once a day). Default 90. */
   retentionDays?: number;
   now?: () => Date;
+  /** Signs every entry this process writes. */
+  signer?: Signer;
+  /** Public keys whose signatures `verify` accepts. Default: the signer's own key, if any. */
+  trustedKeys?: string[];
 }
 
 export interface LedgerMatch {
@@ -61,6 +68,10 @@ export interface Declassification {
 export interface VerifyResult {
   ok: boolean;
   entries: number;
+  /** Entries with a valid signature from a trusted key. */
+  signed?: number;
+  /** Entries written without a signature (before signing was used). */
+  unsigned?: number;
   /** First problem found, if any. */
   problem?: string;
 }
@@ -86,6 +97,8 @@ interface Row {
   source: string | null;
   prev: string;
   hash: string;
+  sig?: string | null;
+  signer?: string | null;
 }
 
 function entryHash(prev: string, r: Pick<Row, "ts" | "kind" | "chunk" | "label" | "writer" | "source">): string {
@@ -115,10 +128,14 @@ export class Ledger {
   readonly path: string;
   private readonly db: DatabaseSyncType;
   private readonly now: () => Date;
+  private readonly signer: Signer | undefined;
+  private readonly trustedKeys: Set<string>;
 
   constructor(path: string = defaultLedgerPath(), opts: LedgerOptions = {}) {
     this.path = path;
     this.now = opts.now ?? (() => new Date());
+    this.signer = opts.signer;
+    this.trustedKeys = new Set(opts.trustedKeys ?? (opts.signer ? [opts.signer.publicKey] : []));
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
     try {
@@ -143,6 +160,9 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS entries_chunk ON entries (chunk, seq);
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
+    // Ledgers from 0.5 and earlier have no signature columns.
+    const columns = new Set((this.db.prepare("PRAGMA table_info(entries)").all() as { name: string }[]).map((c) => c.name));
+    if (!columns.has("sig")) this.db.exec("ALTER TABLE entries ADD COLUMN sig TEXT; ALTER TABLE entries ADD COLUMN signer TEXT;");
     this.prune(opts.retentionDays ?? 90);
   }
 
@@ -187,11 +207,12 @@ export class Ledger {
       const last = this.db.prepare("SELECT hash FROM entries ORDER BY seq DESC LIMIT 1").get() as { hash: string } | undefined;
       let prev = last?.hash ?? this.meta("pruned_hash") ?? GENESIS;
       const insert = this.db.prepare(
-        "INSERT INTO entries (ts, kind, chunk, label, writer, source, prev, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO entries (ts, kind, chunk, label, writer, source, prev, hash, sig, signer) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       for (const r of rows) {
         const hash = entryHash(prev, r);
-        insert.run(r.ts, r.kind, r.chunk, r.label, r.writer, r.source, prev, hash);
+        const sig = this.signer ? this.signer.sign(hash) : null;
+        insert.run(r.ts, r.kind, r.chunk, r.label, r.writer, r.source, prev, hash, sig, this.signer?.publicKey ?? null);
         prev = hash;
       }
       this.db.exec("COMMIT");
@@ -274,18 +295,35 @@ export class Ledger {
   }
 
   /** Check every entry's hash and its link to the one before. */
+  /**
+   * Check every entry's hash and its link to the one before, and each
+   * signature: it must be valid and, if trusted keys are known, from one of
+   * them. Once an entry is signed, later entries must be signed too.
+   */
   verify(): VerifyResult {
     let prev = this.meta("pruned_hash") ?? GENESIS;
     let n = 0;
     let lastSeq = 0;
+    let signed = 0;
+    let unsigned = 0;
     for (const r of this.db.prepare("SELECT * FROM entries ORDER BY seq").all() as unknown as Row[]) {
       n++;
-      if (r.prev !== prev) return { ok: false, entries: n, problem: `entry ${r.seq} doesn't follow entry ${lastSeq || "(start)"}: an entry was removed or changed` };
-      if (entryHash(r.prev, r) !== r.hash) return { ok: false, entries: n, problem: `entry ${r.seq} was changed after it was written` };
+      const fail = (problem: string): VerifyResult => ({ ok: false, entries: n, signed, unsigned, problem: `entry ${r.seq} ${problem}` });
+      if (r.prev !== prev) return fail(`doesn't follow entry ${lastSeq || "(start)"}: an entry was removed or changed`);
+      if (entryHash(r.prev, r) !== r.hash) return fail("was changed after it was written");
+      if (r.sig && r.signer) {
+        if (!verifySignature(r.signer, r.hash, r.sig)) return fail("has a bad signature");
+        if (this.trustedKeys.size > 0 && !this.trustedKeys.has(r.signer)) return fail(`is signed by an unknown key (${r.signer})`);
+        signed++;
+      } else if (signed > 0) {
+        return fail("is unsigned, after signed entries");
+      } else {
+        unsigned++;
+      }
       prev = r.hash;
       lastSeq = r.seq;
     }
-    return { ok: true, entries: n };
+    return { ok: true, entries: n, signed, unsigned };
   }
 
   stats(): { entries: number; records: number; clears: number; writers: number } {

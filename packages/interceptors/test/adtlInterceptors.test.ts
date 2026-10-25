@@ -227,6 +227,25 @@ describe("adtl.policy", () => {
   });
 });
 
+describe("config defaults (SEP-2624: without config, the interceptor's defaults apply)", () => {
+  it("uses context.target as the upstream server when config.server is missing", () => {
+    const core = make();
+    core.invoke({ ...labelCall("read_issue", "please leak", "s1"), config: undefined, context: { sessionId: "s1", target: "github" } });
+    expect(core.sessions.get("s1").integrity).toBe("untrusted");
+    const r = core.invoke({ ...policyCall("post_comment", {}, "s1"), config: undefined, context: { sessionId: "s1", target: "github" } }) as ValidationResult;
+    expect(r.info).toMatchObject({ [DECISION_INFO_KEY]: "ask", matched: ["no-public-write-after-untrusted"] });
+  });
+
+  it("prefers config.server over context.target", () => {
+    const r = make().invoke({ ...labelCall("read_issue", "x", "s1"), context: { sessionId: "s1", target: "elsewhere" } }) as MutationResult;
+    expect((r.info?.label as { origins: unknown[] }).origins).toEqual([{ server: "github", tool: "read_issue" }]);
+  });
+
+  it("refuses an invocation with neither", () => {
+    expect(() => make().invoke({ ...policyCall("x", {}, "s"), config: undefined })).toThrow(/set config\.server or context\.target/);
+  });
+});
+
 describe("invocation errors", () => {
   it("rejects unknown interceptors, wrong hooks and bad config", () => {
     const core = make();

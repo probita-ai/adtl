@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.6.0 — experimental
+
+Authorization and stronger evidence: roles in the config decide who may use which tools, policy rules can name who may approve an "ask", approvals can come from inside the MCP client, and session receipts, ledger entries and declassifications are signed.
+
+### Upgrading
+- No config changes are needed: roles, named approvers and elicitation only apply when you set them.
+- The ledger file gets two columns (`sig`, `signer`) the first time 0.6 opens it; 0.5 can still use it. Entries written before signing are reported as such, not as problems.
+- The first ledger write or receipt creates `~/.adtl/signing-key.pem` (or `ADTL_SIGNING_KEY`).
+
+### `@adtl/labels`
+- Ed25519 signing keys: `loadOrCreateSigner()` (`~/.adtl/signing-key.pem`, or `ADTL_SIGNING_KEY`; created on first use, mode 0600), `loadSigner()`, `signCanonical()`, `verifyCanonical()`, `verifySignature()`. Public keys are written `ed25519:<base64url>`.
+- Policy rules with `then: ask` take `approvers: [role, …]`: who may answer ([#10](https://github.com/probita-ai/adtl/issues/10)). The decision carries each winning rule's approver roles.
+- `globToRegExp()` is exported, for `server.name` patterns.
+
+### `@adtl/ledger`
+- Signed entries ([#29](https://github.com/probita-ai/adtl/issues/29)): with a `signer`, every entry, declassifications included, carries an Ed25519 signature over its hash and the signer's public key. `verify()` reports bad signatures, entries signed by keys outside `trustedKeys` (default: the signer's own), and unsigned entries after signed ones. Older ledgers get the new columns automatically; their entries count as written before signing.
+
+### `@adtl/gateway`
+- `adtl-gateway playground [--port 4317] [--no-open]`: a local web UI that runs the real gateway in front of fake GitHub and memory servers, with three test cases, every call's label and decision, approvals as Allow / Deny buttons, an editable config and the audit log. Listens on 127.0.0.1 only. A broken config on Apply is reported and the playground keeps running; a port in use gets a message instead of a crash.
+- Docs: a click-through mock of the playground for GitHub Pages (`docs/playground/`), with results recorded from real gateway runs.
+- Session receipts ([#26](https://github.com/probita-ai/adtl/issues/26)): `adtl-gateway receipt <session>` writes a signed summary of every call a session made (tool, outcome, decision, approver, call hash, result label, audit line hash, counts), built from the verified audit log. `receipt verify` checks the signature, the signer (`--key`) and, with `--log`, that no call was left out. `receipt list` shows sessions; `adtl-gateway key` prints the public key.
+- The interceptors, the Claude Code hook and `ledger declassify` sign ledger entries with the machine's key; `ledger verify` reports signatures. The hook guards the key file like the ledger.
+- `adtl-gateway init` presets for Slack (`@modelcontextprotocol/server-slack`, by tool name, and `slack-mcp-server`, by its tool hints) and Gmail (`@gongrzhe/server-gmail-autoauth-mcp`) ([#28](https://github.com/probita-ai/adtl/issues/28)): messages and email are untrusted and private; posting, sending, and filters that can forward mail are external egress.
+- The Claude Code hook records which subagent made a call (`agent: { id, type }` in the audit entry), from the `agent_id` and `agent_type` hook fields (part of [#17](https://github.com/probita-ai/adtl/issues/17)).
+- Approvals in the MCP client ([#6](https://github.com/probita-ai/adtl/issues/6)): with `gateway.approvals.elicitation: true`, an "ask" is also shown in clients that support elicitation, with Allow and Deny; the first answer from any channel wins. Declining or dismissing denies. Off by default, and never used for rules with named approvers.
+- Named approvers ([#10](https://github.com/probita-ai/adtl/issues/10)): `gateway.approvals.approvers` gives each person their own ntfy topic. An "ask" whose rules name approver roles goes only to those people, with tokens signed for each of them, and an answer counts only on the same person's reply topic, so the audit log records `approver`. Startup checks that every named role exists, has named members, and that each member has a channel.
+- Role-based authorization in the config ([#8](https://github.com/probita-ai/adtl/issues/8)): `gateway.roles` grants tools and prompts (`server.name` patterns, as in policy rules) and resources (URI patterns) to principal ids, or to `"*"`. Once present, anything no role grants is denied. Config errors name the role and field.
+- Audit entries list every interceptor that ran, with its resolved `mode` and `failOpen` and whether each came from an override or the interceptor's default, as SEP-2624 recommends ([#36](https://github.com/probita-ai/adtl/issues/36)): `interceptors: [{ name, phase, mode, modeFrom, failOpen, failOpenFrom, failed? }]`.
+- `tools/list`, `prompts/list` and `resources/list` leave out what the authorizer would deny, so the agent doesn't try it ([#13](https://github.com/probita-ai/adtl/issues/13)). Calls are still checked; nothing is hidden in audit mode.
+- `gateway.principal` sets who runs the gateway (`${VAR}` works in its `id`); it is passed to the authorizer and to the interceptors as `context.principal`.
+
+### `@adtl/interceptors`
+- `config.server` is optional: without it, `adtl.label` and `adtl.policy` use `context.target`, following SEP-2624's rule that an interceptor invoked without config uses its defaults.
+
 ## 0.5.1 — experimental
 
 Record labels now hold up on memory servers that resolve references from recent messages and overlay updates, such as Mem0 ([#41](https://github.com/probita-ai/adtl/issues/41)). Thanks to Edward Izgorodin for the analysis of Mem0's message buffer.
@@ -39,6 +73,7 @@ Labels now survive memory servers that rewrite what they store, the audit log is
 - `declassify()` takes a subject (e.g. the file name), kept with the reason. `declassifications()` lists recent declassifications.
 
 ### `@adtl/gateway`
+- `adtl-gateway playground [--port 4317] [--no-open]`: a local web UI that runs the real gateway in front of fake GitHub and memory servers, with three test cases, every call's label and decision, approvals, an editable config and the audit log. Listens on 127.0.0.1 only. A broken config on Apply is reported and the playground keeps running; a port in use gets a message instead of a crash.
 - `Authorizer` interface: decides whether the caller may use a tool, resource or prompt at all, before the policy runs. A denial wins over any policy decision; failures deny; audit mode only logs. Pass it as `new AdtlGateway({ authorizer, principal })`; denials are audited as `denied: { by, reason }`. No config support yet ([#8](https://github.com/probita-ai/adtl/issues/8)).
 - After a human approves a call, the gateway checks it again with the confirmation and runs it only if every validator allows it and the call still matches the approved hash. The confirmation token never reaches the agent.
 - Sets `context.target` to the upstream server, and `context.principal` to the configured principal, on every interceptor invocation.

@@ -34,7 +34,8 @@
  * inside this interceptor server for now.
  *
  * Per-invocation `config` (set by the invoker, e.g. adtl-gateway):
- *   server          upstream MCP server id, as named in the ADTL config (required)
+ *   server          upstream MCP server id, as named in the ADTL config
+ *                   (default: `context.target`; one of the two is required)
  *   tool            tool name, if the payload does not carry it
  *   resource        resource URI, if the payload does not carry it
  *   prompt          prompt name, if the payload does not carry it
@@ -74,7 +75,7 @@ export const POLICY_INTERCEPTOR = "adtl.policy";
 /** Key in `ValidationResult.info` carrying ADTL's decision, for invokers that predate `confirmation`. */
 export const DECISION_INFO_KEY = "adtl/decision";
 
-export const VERSION = "0.5.1";
+export const VERSION = "0.6.0";
 
 /** JSON-RPC error codes used for invocation errors. */
 export const ErrorCodes = {
@@ -95,13 +96,12 @@ export class InterceptorError extends Error {
 const CONFIG_SCHEMA: InterceptorDefinition["configSchema"] = {
   type: "object",
   properties: {
-    server: { type: "string", description: "Upstream MCP server id, as named in the ADTL config" },
+    server: { type: "string", description: "Upstream MCP server id, as named in the ADTL config. Default: context.target" },
     tool: { type: "string", description: "Tool name, if the payload does not carry it" },
     resource: { type: "string", description: "Resource URI, if the payload does not carry it" },
     prompt: { type: "string", description: "Prompt name, if the payload does not carry it" },
     toolAnnotations: { type: "object", description: "MCP tool annotations from tools/list" },
   },
-  required: ["server"],
 };
 
 const DEFINITIONS: InterceptorDefinition[] = [
@@ -132,14 +132,15 @@ const DEFINITIONS: InterceptorDefinition[] = [
 
 const InvocationConfigSchema = z
   .object({
-    server: z.string().min(1),
+    server: z.string().min(1).optional(),
     tool: z.string().min(1).optional(),
     resource: z.string().min(1).optional(),
     prompt: z.string().min(1).optional(),
     toolAnnotations: z.object({ openWorldHint: z.boolean().optional() }).passthrough().optional(),
   })
   .passthrough();
-type InvocationConfig = z.infer<typeof InvocationConfigSchema>;
+/** Config with the server resolved (from `config.server`, else `context.target`). */
+type InvocationConfig = z.infer<typeof InvocationConfigSchema> & { server: string };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -223,13 +224,22 @@ export class AdtlInterceptors {
       });
     }
 
+    // SEP-2624: without config, an interceptor uses its defaults. The upstream defaults to the invocation's target.
+    const server = parsed.data.server ?? params.context?.target;
+    if (server === undefined) {
+      throw new InterceptorError(ErrorCodes.InvalidParams, `${def.name} needs the upstream server: set config.server or context.target`, {
+        interceptor: def.name,
+      });
+    }
+    const config: InvocationConfig = { ...parsed.data, server };
+
     const started = this.now();
     const result =
       def.name === POLICY_INTERCEPTOR
-        ? this.policy(params, parsed.data)
+        ? this.policy(params, config)
         : params.phase === "request"
-          ? this.stamp(params, parsed.data)
-          : this.label(params, parsed.data);
+          ? this.stamp(params, config)
+          : this.label(params, config);
     result.durationMs = Math.max(0, Math.round((this.now() - started) * 1000) / 1000);
     return result;
   }
@@ -402,6 +412,8 @@ export class AdtlInterceptors {
       }
       extra.confirmationRejected = confirmed;
     }
+    // Who may answer: the gateway reaches only these roles' members.
+    if (d.approvers) extra.approvers = d.approvers;
     const confirmation = this.confirmationRequest(d.reason, hash, sessionId);
     return this.decision(params, "ask", d.reason, d.matched, hash, session, extra, confirmation);
   }

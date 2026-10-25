@@ -49,6 +49,9 @@ export interface HookInput {
   /** PostToolUseFailure: the error the tool returned. */
   error?: unknown;
   cwd?: string;
+  /** Set when the hook fires inside a subagent (or an in-process teammate). */
+  agent_id?: string;
+  agent_type?: string;
 }
 
 export interface HookOptions {
@@ -62,7 +65,7 @@ export interface HookOptions {
   /** Label ledger shared with the gateway. */
   ledger?: Ledger;
   /** Files the agent must not change: the ADTL config, the session directory and the ledger. */
-  protect?: { configPath?: string; sessionsDir?: string; ledgerPath?: string; auditPath?: string };
+  protect?: { configPath?: string; sessionsDir?: string; ledgerPath?: string; auditPath?: string; signingKeyPath?: string };
 }
 
 /** What the hook process prints and exits with. */
@@ -132,6 +135,9 @@ function protectedTarget(input: HookInput, route: { server: string; tool: string
     if (protect.auditPath && abs.startsWith(resolve(protect.auditPath))) {
       return { decision: "block", reason: "The agent may not change the ADTL audit log" };
     }
+    if (protect.signingKeyPath && abs === resolve(protect.signingKeyPath)) {
+      return { decision: "block", reason: "The agent may not touch the ADTL signing key" };
+    }
   }
   const command = typeof args.command === "string" ? args.command : undefined;
   if (command !== undefined && ["Bash", "Monitor"].includes(route.tool)) {
@@ -145,6 +151,9 @@ function protectedTarget(input: HookInput, route: { server: string; tool: string
     }
     if (protect.auditPath && command.includes(basename(protect.auditPath))) {
       return { decision: "ask", reason: "This command touches the ADTL audit log" };
+    }
+    if (protect.signingKeyPath && command.includes(basename(protect.signingKeyPath))) {
+      return { decision: "ask", reason: "This command touches the ADTL signing key" };
     }
   }
   return undefined;
@@ -173,7 +182,9 @@ export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
   if (!route) return NOTHING;
   const config = withClaudeCodePreset(opts.config);
   const ts = new Date().toISOString();
-  const base = { ts, sessionId: input.session_id, event: "tools/call" as const, ...route, via: "claude-code-hook" as const };
+  const agent =
+    typeof input.agent_id === "string" ? { agent: { id: input.agent_id, ...(typeof input.agent_type === "string" ? { type: input.agent_type } : {}) } } : {};
+  const base = { ts, sessionId: input.session_id, event: "tools/call" as const, ...route, via: "claude-code-hook" as const, ...agent };
 
   if (event !== "PreToolUse") {
     const output = input.tool_response ?? input.error ?? null;

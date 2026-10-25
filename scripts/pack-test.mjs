@@ -60,3 +60,33 @@ for (const bin of ["adtl-gateway", "adtl-interceptors"]) {
   const out = execFileSync("npx", ["--no-install", bin, "--version"], { cwd: app, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   console.log(`npx ${bin} --version → ok`, out.trim());
 }
+
+// The playground ships inside @adtl/gateway: start it from the installed package and fetch its page.
+writeFileSync(
+  join(app, "playground.mjs"),
+  `import { spawn } from "node:child_process";
+// Its own process group, so stopping it also stops npm exec, sh and the playground's children (on Linux a
+// signal to npx alone doesn't reach them, and the open pipe would keep this script waiting forever).
+const p = spawn("npx", ["--no-install", "adtl-gateway", "playground", "--no-open", "--port", "0"], { stdio: ["ignore", "pipe", "inherit"], detached: true });
+const stop = async () => {
+  const exited = new Promise((r) => p.once("exit", r));
+  try { process.kill(-p.pid, "SIGINT"); } catch {}
+  await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
+  try { process.kill(-p.pid, "SIGKILL"); } catch {}
+};
+let out = "";
+const url = await new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(new Error("playground did not start: " + out)), 30000);
+  p.stdout.on("data", (d) => { out += d; const m = /http:\\/\\/localhost:\\d+/.exec(out); if (m) { clearTimeout(t); resolve(m[0]); } });
+  p.on("exit", (code) => reject(new Error("playground exited with " + code + ": " + out)));
+}).catch(async (err) => { await stop(); throw err; });
+const html = await (await fetch(url)).text();
+const r = await fetch(url + "/api/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "github__list_repos", args: {} }) });
+const call = await r.json();
+await stop();
+if (!html.includes("<html") || call.audit?.outcome !== "forwarded") { console.error("FAILED", html.slice(0, 80), call); process.exit(1); }
+console.log("npx adtl-gateway playground → page served, calls go through the gateway ✓");
+process.exit(0);
+`,
+);
+console.log(run("node", ["playground.mjs"], app).trim());

@@ -12,6 +12,8 @@
 import type { AnswerFn, ApprovalEvent, ApprovalRequest, Notifier } from "./approvals.js";
 
 export interface NtfyOptions {
+  /** Channel name in approval results and logs. Default: "ntfy". */
+  name?: string;
   /** Server base URL, e.g. https://ntfy.sh */
   server: string;
   topic: string;
@@ -32,7 +34,7 @@ function describe(request: ApprovalRequest): string {
 }
 
 export class NtfyNotifier implements Notifier {
-  readonly name = "ntfy";
+  readonly name: string;
   private readonly server: string;
   private readonly topic: string;
   private readonly replyTopic: string;
@@ -42,6 +44,7 @@ export class NtfyNotifier implements Notifier {
   private readonly publishAttempts: number;
 
   constructor(opts: NtfyOptions) {
+    this.name = opts.name ?? "ntfy";
     this.server = opts.server.replace(/\/+$/, "");
     this.topic = opts.topic;
     this.replyTopic = opts.replyTopic ?? `${opts.topic}-reply`;

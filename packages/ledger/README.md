@@ -12,7 +12,7 @@ Session labels end with the session. If an agent reads an untrusted web page and
 
 Text is normalized (Unicode NFC, lowercase, whitespace collapsed) and hashed whole, per paragraph and per line, skipping pieces under 32 characters. A paragraph copied into a bigger file still matches. Text the agent rewrote is caught too, because it was written by the tainted session. Text a person rewrote by hand is not, and neither is text a server rewrote after it was sent: memory servers that extract facts with a model on write, or merge records, store sentences the session never sent, so they match nothing. For those, the gateway can carry the label on the record instead (`labelInto` / `readLabels`, see the [gateway docs](../gateway#labels-on-records)).
 
-Entries live in one SQLite file (`node:sqlite`, no native dependency), hash-chained so edits and deletions are detectable, and pruned after 90 days by default.
+Entries live in one SQLite file (`node:sqlite`, no native dependency), hash-chained so edits and deletions are detectable, and pruned after 90 days by default. With `signer` (from `loadOrCreateSigner()` in `@adtl/labels`), each entry also carries an Ed25519 signature over its hash and the signer's public key, and `verify()` checks them against `trustedKeys` (default: the signer's own key).
 
 ```ts
 import { Ledger, chunkHashes } from "@adtl/ledger";

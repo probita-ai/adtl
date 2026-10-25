@@ -12,15 +12,21 @@
  *       docs:
  *         url: https://example.com/mcp
  *         headers: { Authorization: "Bearer ${DOCS_TOKEN}" }
+ *     principal: { id: "${USER}" }       # optional: who runs this gateway (default: anonymous)
+ *     roles:                             # optional: who may use which tools (deny by default)
+ *       maintainers: { members: [alice], tools: ["github.*"] }
+ *       readers:     { members: ["*"],   tools: ["github.read_*", "github.get_*"] }
  *     approvals:                         # optional: make "ask" really ask
  *       timeoutSeconds: 50
  *       ntfy: { topic: "${ADTL_NTFY_TOPIC}" }
+ *       approvers:                       # optional: each approver's own channel (policy rule `approvers:`)
+ *         alice: { ntfy: { topic: "${ALICE_NTFY_TOPIC}" } }
  *       email:
  *         smtp: { host: smtp.example.com, port: 465, user: "${SMTP_USER}", pass: "${SMTP_PASS}" }
  *         from: adtl@example.com
  *         to: you@example.com
  *
- * `${VAR}` in command, args, env, cwd, url, headers and approval settings is
+ * `${VAR}` in command, args, env, cwd, url, headers, approval settings and principal.id is
  * replaced from the gateway's environment. A missing variable is a config error,
  * unless a default is given: `${VAR:-default}`.
  */
@@ -88,9 +94,49 @@ export const ApprovalsConfigSchema = z
     timeoutSeconds: z.number().int().positive().max(3600).default(50),
     ntfy: NtfyConfigSchema.optional(),
     email: EmailConfigSchema.optional(),
+    /**
+     * Also ask in the MCP client (elicitation), when it supports it. Off by
+     * default: a client that accepts elicitations by itself would approve calls.
+     */
+    elicitation: z.boolean().default(false),
+    /**
+     * Each approver's own channel, by principal id. Policy rules with
+     * `approvers: [role]` ask only these people, so the answer names who approved.
+     */
+    approvers: z.record(z.object({ ntfy: NtfyConfigSchema }).strict()).optional(),
   })
   .strict();
 export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>;
+
+/** `server.tool` (or `server.prompt`), with `*` wildcards, as in policy rules. */
+const QualifiedPattern = z
+  .string()
+  .min(1)
+  .refine((p) => /^[^.]+\..+$/.test(p), { message: 'Use "server.name" with optional * wildcards, e.g. "github.read_*" or "github.*"' });
+
+export const PrincipalConfigSchema = z
+  .object({
+    type: z.enum(["user", "service"]).default("user"),
+    id: z.string().min(1),
+    claims: z.record(z.unknown()).optional(),
+  })
+  .strict();
+export type PrincipalConfig = z.infer<typeof PrincipalConfigSchema>;
+
+export const RoleSchema = z
+  .object({
+    /** Principal ids; "*" means everyone, including an anonymous caller. */
+    members: z.array(z.string().min(1)).nonempty("A role needs at least one member (\"*\" for everyone)"),
+    tools: z.array(QualifiedPattern).default([]),
+    prompts: z.array(QualifiedPattern).default([]),
+    /** Resource URI patterns, e.g. "github://acme/*". */
+    resources: z.array(z.string().min(1)).default([]),
+  })
+  .strict()
+  .refine((r) => r.tools.length + r.prompts.length + r.resources.length > 0, {
+    message: "A role must grant at least one of tools, prompts or resources",
+  });
+export type RoleConfig = z.infer<typeof RoleSchema>;
 
 export const GatewayConfigSchema = z
   .object({
@@ -113,6 +159,13 @@ export const GatewayConfigSchema = z
     approvals: ApprovalsConfigSchema.optional(),
     /** Timeout for each interceptor invocation, in milliseconds. */
     interceptorTimeoutMs: z.number().int().positive().default(5000),
+    /** Who runs this gateway. Passed to the authorizer and the interceptors. Default: anonymous. */
+    principal: PrincipalConfigSchema.optional(),
+    /** Role-based authorization: when present, a call no role grants is denied. */
+    roles: z
+      .record(RoleSchema)
+      .refine((r) => Object.keys(r).length > 0, "roles: needs at least one role (remove it to allow everyone)")
+      .optional(),
   })
   .strict();
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
