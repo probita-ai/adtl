@@ -11,6 +11,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Fail a hang in minutes rather than at GitHub's 6-hour limit.
+    timeout-minutes: 15
     strategy:
       matrix:
         node: [22, 24]
