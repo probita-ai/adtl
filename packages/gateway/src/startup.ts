@@ -14,7 +14,8 @@ import { parse as parseYaml } from "yaml";
 import { ZodError } from "zod";
 import { ApprovalBroker, type Notifier } from "./approvals.js";
 import { JsonlAuditLog } from "./audit.js";
-import type { Principal } from "./authorizer.js";
+import type { Authorizer, Principal } from "./authorizer.js";
+import { CedarAuthorizer } from "./cedar.js";
 import {
   GatewayConfigSchema,
   expandApprovals,
@@ -171,6 +172,23 @@ export function gatewayPrincipal(cfg: GatewayConfig, env: NodeJS.ProcessEnv): Pr
 }
 
 /**
+ * The configured authorizers, in the order they are asked: roles, then cedar.
+ * Cedar files are read and parsed here, so a bad policy fails startup.
+ */
+export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string): Promise<Authorizer[]> {
+  const out: Authorizer[] = [];
+  if (cfg.roles) out.push(new RoleAuthorizer(cfg.roles));
+  if (cfg.cedar) {
+    try {
+      out.push(await CedarAuthorizer.load(cfg.cedar, (p) => resolve(baseDir, p)));
+    } catch (err) {
+      throw new GatewayConfigError((err as Error).message);
+    }
+  }
+  return out;
+}
+
+/**
  * Under Claude Code, which passes `CLAUDE_CODE_SESSION_ID` to stdio MCP
  * servers, the gateway uses that id and keeps session labels in files, so the
  * Claude Code hooks (`adtl-gateway hook`) add to the same session label.
@@ -193,6 +211,7 @@ export async function startGateway(
   // Config problems that need no process: fail before starting any.
   const approverMembers = approverRoles(loaded.labels, loaded.gateway);
   const baseDir = dirname(loaded.path);
+  const authorizers = await gatewayAuthorizers(loaded.gateway, baseDir);
   const log = opts.logger ?? { info: (m: string) => console.error(`[adtl-gateway] ${m}`), warn: (m: string) => console.error(`[adtl-gateway] warning: ${m}`) };
   const clients: Client[] = [];
   const closeAll = () => Promise.allSettled(clients.map((c) => c.close())).then(() => undefined);
@@ -260,13 +279,14 @@ export async function startGateway(
       log.info(`roles: ${Object.keys(roles).join(", ")} (caller: ${principal?.id ?? "anonymous"})`);
       if (!principal) log.warn('roles are set but gateway.principal is not: only roles with members ["*"] apply');
     }
+    for (const a of authorizers) if (a.name !== "roles") log.info(`authorizer: ${a.name}`);
     const gateway = new AdtlGateway({
       ...(shared ? { sessionId: shared.sessionId } : {}),
       upstreams,
       invoker,
       ...(auditLog ? { audit: auditLog } : {}),
       ...(approvals ? { approvals } : {}),
-      ...(roles ? { authorizer: new RoleAuthorizer(roles) } : {}),
+      ...(authorizers.length ? { authorizer: authorizers } : {}),
       ...(principal ? { principal } : {}),
       ...(approverMembers.size ? { approverRoles: approverMembers } : {}),
       ...(loaded.gateway.approvals?.elicitation ? { elicitApprovals: true } : {}),

@@ -1,6 +1,6 @@
 {
   "name": "@adtl/ledger",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Experimental: label ledger for AI agents \u2014 remembers content written by tainted sessions and re-labels it when it is read back",
   "keywords": [
     "mcp",
@@ -42,7 +42,7 @@
     "url": "https://github.com/probita-ai/adtl/issues"
   },
   "dependencies": {
-    "@adtl/labels": "0.6.0"
+    "@adtl/labels": "0.7.0"
   },
   "engines": {
     "node": ">=22.13"

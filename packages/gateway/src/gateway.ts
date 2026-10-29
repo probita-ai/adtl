@@ -21,9 +21,9 @@
  * unanswered or undeliverable calls are stopped. Without an approval channel,
  * "ask" blocks.
  *
- * An optional Authorizer decides first whether the caller may use the tool,
- * resource or prompt at all; a denial stops the call before the policy runs.
- * The lists the agent sees leave out what the authorizer would deny, so the
+ * Optional Authorizers decide first whether the caller may use the tool,
+ * resource or prompt at all; any denial stops the call before the policy runs.
+ * The lists the agent sees leave out what an authorizer would deny, so the
  * agent doesn't try it; hiding is a convenience, and every call is still checked.
  *
  * In audit mode (the invoker runs every interceptor with `mode: "audit"`)
@@ -62,7 +62,7 @@ import { authorize, type AuthorizationRequest, type Authorizer, type Denial, typ
 import { TOOL_SEPARATOR } from "./config.js";
 import type { Blocked, InterceptorInvoker, InterceptorRun, PhaseOutcome } from "./invoker.js";
 
-export const GATEWAY_VERSION = "0.6.0";
+export const GATEWAY_VERSION = "0.7.0";
 
 /** `_meta` key on gateway-generated error results describing why a call was stopped. */
 export const GATEWAY_DECISION_KEY = "adtl/gateway";
@@ -107,8 +107,8 @@ export interface AdtlGatewayOptions {
   logger?: GatewayLogger;
   /** Asks humans about "ask" decisions and sends notices. */
   approvals?: ApprovalBroker;
-  /** Decides whether the caller may use a tool, resource or prompt at all, before the policy. */
-  authorizer?: Authorizer;
+  /** Decides whether the caller may use a tool, resource or prompt at all, before the policy. Several must all allow. */
+  authorizer?: Authorizer | Authorizer[];
   /** The caller, passed to the authorizer and the interceptors. Default: anonymous. */
   principal?: Principal;
   /** Members of each role that policy rules name as `approvers:`. */
@@ -172,7 +172,7 @@ export class AdtlGateway {
   private readonly audit: AuditSink | undefined;
   private readonly log: GatewayLogger;
   private readonly approvals: ApprovalBroker | undefined;
-  private readonly authorizer: Authorizer | undefined;
+  private readonly authorizers: Authorizer[];
   private readonly principal: Principal;
   private readonly approverRoles: Map<string, string[]>;
   private readonly elicitApprovals: boolean;
@@ -191,15 +191,19 @@ export class AdtlGateway {
     this.audit = opts.audit;
     this.log = opts.logger ?? stderrLogger;
     this.approvals = opts.approvals;
-    this.authorizer = opts.authorizer;
+    this.authorizers = opts.authorizer === undefined ? [] : [opts.authorizer].flat();
     this.principal = opts.principal ?? { type: "anonymous" };
     this.approverRoles = opts.approverRoles ?? new Map();
     this.elicitApprovals = opts.elicitApprovals === true;
   }
 
-  /** Ask the authorizer, if any. Returns the denial; in audit mode the caller logs it and carries on. */
+  /** Ask each authorizer in turn. Returns the first denial; in audit mode the caller logs it and carries on. */
   private async authorize(request: Omit<AuthorizationRequest, "principal">): Promise<Denial | undefined> {
-    return this.authorizer ? authorize(this.authorizer, { principal: this.principal, ...request }) : undefined;
+    for (const a of this.authorizers) {
+      const denied = await authorize(a, { principal: this.principal, ...request });
+      if (denied) return denied;
+    }
+    return undefined;
   }
 
   /** The downstream MCP server the agent connects to. */
@@ -299,7 +303,7 @@ export class AdtlGateway {
    * call: routes are kept, and a call to a hidden item is still authorized.
    */
   private async hideDenied<T>(items: T[], request: (item: T) => Omit<AuthorizationRequest, "principal"> | undefined): Promise<T[]> {
-    if (!this.authorizer || this.invoker.modeOverride === "audit") return items;
+    if (!this.authorizers.length || this.invoker.modeOverride === "audit") return items;
     const shown = await Promise.all(
       items.map(async (item) => {
         const r = request(item);
