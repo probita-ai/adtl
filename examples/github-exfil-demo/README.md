@@ -15,7 +15,7 @@ An agent with access to both repos reads the issue, follows the instruction, and
 
 ## What the demo does
 
-It runs the same agent twice against a **fake GitHub MCP server** ([../fake-github/server.mjs](../fake-github/server.mjs)). The fake server needs no network or token, and it records every comment that actually gets posted.
+It runs the same agent twice against a **fake GitHub MCP server** ([../fake-github/server.mjs](../fake-github/server.mjs)). The fake server needs no network or token, and it records every comment that actually gets posted. To run the attack against GitHub's real MCP server, see [../github-real-demo](../github-real-demo/README.md).
 
 | Run | Path | Result |
 |---|---|---|
