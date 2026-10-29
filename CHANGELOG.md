@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0 — experimental
+
+The exfiltration attack now runs against GitHub's real MCP server, and Cedar policies can decide who may use which tools.
+
+### Upgrading
+- No config changes are needed. `gateway.cedar` only applies when you set it, and its engine (`@cedar-policy/cedar-wasm`) is an optional dependency you install yourself.
+
+### `@adtl/gateway`
+- Cedar authorization ([#11](https://github.com/probita-ai/adtl/issues/11)): `gateway.cedar: { policies, entities?, timeZone? }`. Each call becomes a Cedar request (`User::"<id>"`, `Action::"tools/call"`, `Tool::"<server>.<tool>"`) with `server`, `principalId`, `listing`, `time` and `arguments` in the context, for rules such as working hours or "only repos in your org". Policies that don't parse stop startup; evaluation errors deny. Tool arguments can't name Cedar entities.
+- The gateway takes several authorizers (`authorizer: [a, b]`); every one must allow, and the first denial is reported. With `roles` and `cedar` both set, both apply.
+- `CedarAuthorizer` and `gatewayAuthorizers()` are exported.
+
+### Examples
+- `examples/github-real-demo` ([#27](https://github.com/probita-ai/adtl/issues/27)): the GitHub-issue exfiltration attack against `github-mcp-server` (tested with v2.0.3), with two throwaway repos and a fine-grained token. Run 2's labels come from the `github` preset via `adtl-gateway init`, not a hand-written config. Opt-in with `npm run demo:github`; not part of `npm test`. It checks for the leak through the GitHub API and deletes the leaked comment afterwards.
+
 ## 0.6.0 — experimental
 
 Authorization and stronger evidence: roles in the config decide who may use which tools, policy rules can name who may approve an "ask", approvals can come from inside the MCP client, and session receipts, ledger entries and declassifications are signed.

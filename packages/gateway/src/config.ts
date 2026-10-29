@@ -16,6 +16,7 @@
  *     roles:                             # optional: who may use which tools (deny by default)
  *       maintainers: { members: [alice], tools: ["github.*"] }
  *       readers:     { members: ["*"],   tools: ["github.read_*", "github.get_*"] }
+ *     cedar: { policies: ./adtl.cedar }  # optional: attribute-based rules (see cedar.ts)
  *     approvals:                         # optional: make "ask" really ask
  *       timeoutSeconds: 50
  *       ntfy: { topic: "${ADTL_NTFY_TOPIC}" }
@@ -138,6 +139,29 @@ export const RoleSchema = z
   });
 export type RoleConfig = z.infer<typeof RoleSchema>;
 
+export const CedarConfigSchema = z
+  .object({
+    /** Cedar policy file. Relative paths are resolved against the config file's directory. */
+    policies: z.string().min(1),
+    /** Optional Cedar entities JSON file: groups (`parents`) and attributes. */
+    entities: z.string().min(1).optional(),
+    /** IANA time zone for `context.time`, e.g. "Europe/Berlin". Default: the gateway's. */
+    timeZone: z
+      .string()
+      .min(1)
+      .refine((tz) => {
+        try {
+          new Intl.DateTimeFormat("en-US", { timeZone: tz });
+          return true;
+        } catch {
+          return false;
+        }
+      }, "Unknown time zone")
+      .optional(),
+  })
+  .strict();
+export type CedarConfig = z.infer<typeof CedarConfigSchema>;
+
 export const GatewayConfigSchema = z
   .object({
     upstreams: z
@@ -166,6 +190,8 @@ export const GatewayConfigSchema = z
       .record(RoleSchema)
       .refine((r) => Object.keys(r).length > 0, "roles: needs at least one role (remove it to allow everyone)")
       .optional(),
+    /** Cedar authorization. With roles as well, both must allow. */
+    cedar: CedarConfigSchema.optional(),
   })
   .strict();
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;

@@ -128,6 +128,7 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
 | `gateway.principal` | Who runs this gateway: `{ id, type?, claims? }`. `${VAR}` works in `id`. Default: anonymous. See [Authorization](#authorization). |
 | `gateway.roles` | Who may use which tools, prompts and resources. Deny by default once present. See [Authorization](#authorization). |
+| `gateway.cedar` | Cedar policies for attribute-based rules: `{ policies, entities?, timeZone? }`. See [Cedar policies](#cedar-policies). |
 
 #### Checking the audit log
 
@@ -361,6 +362,57 @@ gateway:
 - Over stdio the caller is whoever started the gateway, set with `gateway.principal`. Without it the caller is anonymous and only roles with `members: ["*"]` apply (the gateway warns at startup).
 - `tools/list`, `prompts/list` and `resources/list` leave out what the caller may not use, so the agent doesn't try it. Hiding is a convenience, not the security boundary: a call to a hidden tool is still checked and denied. Lists are checked without arguments, and nothing is hidden in audit mode. Resource templates are always listed.
 
+#### Cedar policies
+
+For rules roles can't express (working hours, tool arguments, groups kept in another system), write [Cedar](https://www.cedarpolicy.com/) policies:
+
+```sh
+npm install @cedar-policy/cedar-wasm      # optional dependency, only needed for gateway.cedar
+```
+
+```yaml
+gateway:
+  principal: { id: "${USER}" }
+  cedar:
+    policies: ./adtl.cedar        # relative to adtl.yaml
+    entities: ./entities.json     # optional: groups and attributes, in Cedar's entities JSON
+    timeZone: Europe/Berlin       # optional: for context.time (default: the gateway's)
+```
+
+```cedar
+// Everyone may read issues.
+permit (principal, action == Action::"tools/call", resource == Tool::"github.issue_read");
+
+// Maintainers may use any GitHub tool, on weekdays during working hours.
+permit (principal in Group::"maintainers", action, resource)
+when { context.server == "github" && context.time.hour >= 9 && context.time.hour < 18
+       && !["Sat", "Sun"].contains(context.time.weekday) };
+
+// Anyone may comment in the orgs listed on their entity (entities.json: "attrs": { "orgs": ["acme"] }).
+permit (principal, action == Action::"tools/call", resource == Tool::"github.add_issue_comment")
+when { context.listing || (principal has orgs && principal.orgs.contains(context.arguments.owner)) };
+
+// Nobody reads secrets files.
+forbid (principal, action, resource == Tool::"github.get_file_contents")
+when { context has arguments && context.arguments has path && context.arguments.path like "*secret*" };
+```
+
+Each call becomes a Cedar request:
+
+| | |
+|---|---|
+| principal | `User::"<id>"`, `Service::"<id>"`, or `Anonymous::"anonymous"` without an id |
+| action | `Action::"tools/call"`, `Action::"resources/read"` or `Action::"prompts/get"` |
+| resource | `Tool::"<server>.<tool>"`, `Prompt::"<server>.<prompt>"` or `Resource::"<uri>"` |
+| context | `server`, `principalId`, `listing`, `time: { hour, minute, weekday }`, and `arguments` |
+
+- Cedar denies unless a policy permits, and a `forbid` beats any `permit`. The denial names the forbidding policy (`policy0`, `policy1`, … in file order).
+- Lists are checked with `listing: true` and no `arguments`. Start a policy that reads arguments with `context.listing ||`, or the tool is hidden from lists (calls are still checked with arguments).
+- Arguments are passed without nulls, with fractions as strings. Objects with `__entity` or `__extn` are passed as JSON strings, so a tool argument can't name an entity.
+- With `roles` set too, both must allow. A policy file that doesn't parse stops the gateway at startup; an evaluation error denies the call.
+
+#### Your own authorizer
+
 Or your own `Authorizer` in code:
 
 ```ts
@@ -377,6 +429,8 @@ const readOnly: Authorizer = {
 new AdtlGateway({ upstreams, invoker, authorizer: readOnly, principal: { type: "user", id: "alice" } });
 ```
 
+Pass an array (`authorizer: [roles, readOnly]`) to ask several in turn: the first denial wins.
+
 - It runs on every `tools/call`, `resources/read` and `prompts/get`, before the interceptors. A denial stops the call whatever the policy says; an allow still leaves the call to the policy.
 - It gets `{ principal, event, server, tool | resource | prompt, arguments }`. The principal is also passed to the interceptors as SEP-2624 `context.principal`. Over stdio it is whoever started the gateway (anonymous unless set).
 - Denials are audited with `denied: { by, reason }`. An authorizer that throws denies the call. In audit mode denials are logged and the call still runs.
@@ -388,8 +442,8 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 
 - Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
 - Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
-- Approvals come from one push channel (ntfy). Other channels, approvals inside the MCP client, and approver roles are planned.
-- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.7). Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
+- Approvals come from ntfy, email notices and, with `elicitation: true`, the MCP client. Authenticator-app codes (TOTP) are planned.
+- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.8). Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
 - The Claude Code hooks label tools by name, not by what they touched: a `Read` of a downloaded file is as trusted as a `Read` of your own code.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.
 
