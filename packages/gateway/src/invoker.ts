@@ -73,6 +73,14 @@ export interface InterceptorOverrides {
 export interface BoundInterceptor {
   client: Client;
   definition: InterceptorDefinition;
+  /** Id of the interceptor server that advertised it, for messages. */
+  server?: string;
+  /**
+   * Whether the gateway's per-call `config` (ADTL's server, tool and
+   * annotations) is sent. Other servers' interceptors get none, so their
+   * own defaults apply. Default: true.
+   */
+  sendConfig?: boolean;
 }
 
 export interface Blocked {
@@ -152,6 +160,38 @@ export function checkOverrides(defs: InterceptorDefinition[], overrides: Record<
   return problems;
 }
 
+/** Interceptor names offered by more than one server: each must be invoked on its own server, so names must be unique. */
+export function duplicateInterceptors(bound: BoundInterceptor[]): string[] {
+  const servers = new Map<string, string[]>();
+  for (const b of bound) servers.set(b.definition.name, [...(servers.get(b.definition.name) ?? []), b.server ?? "?"]);
+  return [...servers].filter(([, s]) => s.length > 1).map(([name, s]) => `${name} (offered by ${s.join(", ")})`);
+}
+
+/**
+ * Mutators that would run after `name` on a phase both hook, so they see (and
+ * could change or drop) what it wrote. Used to warn when another server's
+ * mutator runs after adtl.label.
+ */
+export function mutatorsAfter(bound: BoundInterceptor[], name: string, overrides: Record<string, InterceptorOverrides> = {}): string[] {
+  const target = bound.find((b) => b.definition.name === name);
+  if (!target) return [];
+  const hooksOf = (b: BoundInterceptor) => overrides[b.definition.name]?.hooks ?? b.definition.hooks;
+  const shares = (b: BoundInterceptor, phase: Phase) =>
+    hooksOf(b).some((h) => h.phase === phase && hooksOf(target).some((t) => t.phase === phase && (h.events.includes("*") || t.events.includes("*") || h.events.some((e) => t.events.includes(e)))));
+  const after: string[] = [];
+  for (const b of bound) {
+    if (b === target || b.definition.type !== "mutation") continue;
+    const late = (["request", "response"] as const).some((phase) => {
+      if (!shares(b, phase)) return false;
+      const p = resolvePriority(b.definition, overrides[b.definition.name], phase);
+      const t = resolvePriority(target.definition, overrides[name], phase);
+      return p > t || (p === t && b.definition.name.localeCompare(name) > 0);
+    });
+    if (late) after.push(b.definition.name);
+  }
+  return after;
+}
+
 export class InterceptorInvoker {
   constructor(
     private readonly interceptors: BoundInterceptor[],
@@ -163,10 +203,10 @@ export class InterceptorInvoker {
   ) {}
 
   /** Discover the interceptors an interceptor server offers. */
-  static async discover(client: Client): Promise<BoundInterceptor[]> {
+  static async discover(client: Client, opts: { server?: string; sendConfig?: boolean } = {}): Promise<BoundInterceptor[]> {
     const res = await request(client, LIST_METHOD, {}, 10_000);
     const defs = (res.interceptors ?? []) as InterceptorDefinition[];
-    return defs.map((definition) => ({ client, definition }));
+    return defs.map((definition) => ({ client, definition, ...opts }));
   }
 
   get definitions(): InterceptorDefinition[] {
@@ -234,7 +274,15 @@ export class InterceptorInvoker {
     const res = await request(
       i.client,
       INVOKE_METHOD,
-      { name: i.definition.name, event: opts.event, phase, payload, config: opts.config, timeoutMs, context: opts.context },
+      {
+        name: i.definition.name,
+        event: opts.event,
+        phase,
+        payload,
+        ...(i.sendConfig === false ? {} : { config: opts.config }),
+        timeoutMs,
+        context: opts.context,
+      },
       timeoutMs,
     );
     return res as unknown as InterceptorResult;

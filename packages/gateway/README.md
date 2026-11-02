@@ -141,9 +141,26 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress`, `t
 | `gateway.interceptorTimeoutMs` | Timeout per interceptor call (default 5000) |
 | `gateway.interceptorOverrides.<name>` | Execution policy for one interceptor, overriding what it declares: `failOpen`, `priorityHint`, `mode`, `timeoutMs`, and `hooks` (may only narrow the declared hooks). See [Interceptor overrides](#interceptor-overrides). |
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
+| `gateway.interceptorServers.<id>` | More interceptor servers, stdio or Streamable HTTP, whose interceptors run beside ADTL's. See [More interceptor servers](#more-interceptor-servers). |
 | `gateway.principal` | Who runs this gateway: `{ id, type?, claims? }`. `${VAR}` works in `id`. Default: anonymous. See [Authorization](#authorization). |
 | `gateway.roles` | Who may use which tools, prompts and resources. Deny by default once present. See [Authorization](#authorization). |
 | `gateway.cedar` | Cedar policies for attribute-based rules: `{ policies, entities?, timeZone? }`. See [Cedar policies](#cedar-policies). |
+
+#### More interceptor servers
+
+SEP-2624 interceptors can come from several servers. Add other people's interceptors (PII redaction, logging, your own checks) next to ADTL's:
+
+```yaml
+gateway:
+  interceptorServers:
+    pii: { command: npx, args: ["-y", "some-pii-interceptor"] }   # local, over stdio
+    audit: { url: https://audit.example.com/mcp, headers: { Authorization: "Bearer ${AUDIT_TOKEN}" } }
+```
+
+- Each interceptor is invoked on the server that advertised it, in the usual order: mutators by priority then name, validators in parallel.
+- They get the call's payload and context, but not ADTL's per-call `config` (server, tool, annotations), so their own defaults apply.
+- The gateway refuses to start if a server can't be reached, doesn't declare the interceptors extension, or offers an interceptor whose name another server already uses.
+- `adtl.label` runs late (priority 1000) so its label describes the final content. A mutator that would run after it gets a warning at startup, since it could change or drop the label; give it a lower `priorityHint` with an [override](#interceptor-overrides).
 
 #### Interceptor overrides
 

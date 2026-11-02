@@ -9,6 +9,7 @@ Not released yet.
 - The audit log's `interceptors` entries now carry `timeoutMs`, and `modeFrom` / `failOpenFrom` say `override` when an override applies.
 - The invoker enforces each interceptor's timeout itself, so an interceptor client that ignores the timeout can no longer hang a call.
 - `checkOverrides()`, `resolvePriority()` and the `InterceptorOverrides` type are exported.
+- More interceptor servers ([#51](https://github.com/probita-ai/adtl/issues/51)): `gateway.interceptorServers.<id>` adds stdio or Streamable HTTP interceptor servers whose interceptors run beside ADTL's, each invoked on the server that advertised it. They don't get ADTL's per-call `config`. Startup stops on an unreachable server, a missing extension capability or a duplicate interceptor name, and warns about mutators that run after `adtl.label`.
 - `init` drafts egress from a tool's action-metadata `destination` ahead of `readOnlyHint` / `openWorldHint`.
 
 ### `@adtl/labels`

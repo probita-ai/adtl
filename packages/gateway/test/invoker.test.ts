@@ -77,3 +77,16 @@ describe("InterceptorInvoker", () => {
     expect(checkOverrides(defs, { typo: { mode: "audit" } })[0]).toMatch(/no such interceptor/);
   });
 });
+
+describe("InterceptorInvoker with several servers", () => {
+  it("sends the gateway's config only to interceptors that want it", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const client = {
+      request: async (req: { params: Record<string, unknown> }) => (seen.push(req.params), { valid: true, severity: "info" }),
+    } as unknown as Client;
+    const def = (name: string): InterceptorDefinition => ({ name, type: "validation", hooks: [{ events: ["tools/call"], phase: "request" }] });
+    await run(new InterceptorInvoker([{ client, definition: def("ours") }, { client, definition: def("theirs"), sendConfig: false }]));
+    expect(seen.find((p) => p.name === "ours")).toHaveProperty("config", { server: "s" });
+    expect(seen.find((p) => p.name === "theirs")).not.toHaveProperty("config");
+  });
+});

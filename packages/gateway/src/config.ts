@@ -12,6 +12,8 @@
  *       docs:
  *         url: https://example.com/mcp
  *         headers: { Authorization: "Bearer ${DOCS_TOKEN}" }
+ *     interceptorServers:                # optional: more interceptor servers, run beside ADTL's
+ *       pii: { url: https://pii.example.com/mcp }
  *     interceptorOverrides:              # optional: per-interceptor execution policy (SEP-2624)
  *       adtl.label: { timeoutMs: 10000 }
  *     principal: { id: "${USER}" }       # optional: who runs this gateway (default: anonymous)
@@ -192,6 +194,13 @@ export const GatewayConfigSchema = z
       }),
     /** How to start the interceptor server. Default: the bundled adtl-interceptors with this same config file. */
     interceptors: StdioUpstreamSchema.optional(),
+    /** More interceptor servers (stdio or Streamable HTTP) whose interceptors run beside ADTL's. */
+    interceptorServers: z
+      .record(UpstreamSchema)
+      .refine((u) => Object.keys(u).every((id) => UPSTREAM_ID.test(id)), {
+        message: "Interceptor server ids may only contain letters, digits and '-'",
+      })
+      .default({}),
     /** Path of a JSONL audit log. Relative paths are resolved against the config file's directory. */
     audit: z.string().min(1).optional(),
     /**

@@ -28,7 +28,7 @@ import {
 } from "./config.js";
 import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
-import { InterceptorInvoker, checkOverrides } from "./invoker.js";
+import { InterceptorInvoker, checkOverrides, duplicateInterceptors, mutatorsAfter } from "./invoker.js";
 import { NtfyNotifier } from "./ntfy.js";
 import { RoleAuthorizer } from "./roles.js";
 
@@ -237,16 +237,40 @@ export async function startGateway(
     if (!interceptors.getServerCapabilities()?.extensions?.[INTERCEPTORS_EXTENSION]) {
       throw new GatewayConfigError(`The interceptor server does not declare the ${INTERCEPTORS_EXTENSION} extension`);
     }
-    const bound = await InterceptorInvoker.discover(interceptors);
-    const names = bound.map((b) => b.definition.name);
+    const own = await InterceptorInvoker.discover(interceptors, { server: "interceptors" });
+    const ownNames = own.map((b) => b.definition.name);
     for (const required of [POLICY_INTERCEPTOR, LABEL_INTERCEPTOR]) {
-      if (!names.includes(required)) {
+      if (!ownNames.includes(required)) {
         throw new GatewayConfigError(`The interceptor server does not offer ${required}; refusing to start without it`);
       }
     }
+    // More interceptor servers (SEP-2624: interceptors may come from N servers, each invoked where it was advertised).
+    // A server that can't be reached stops startup: the owner asked for its interceptors.
+    const bound = [...own];
+    for (const [id, server] of Object.entries(loaded.gateway.interceptorServers)) {
+      const where = `gateway.interceptorServers.${id}`;
+      let client: Client;
+      try {
+        client = await connectUpstream(`interceptors:${id}`, expandUpstream(id, server, env), baseDir);
+      } catch (err) {
+        throw new GatewayConfigError(`${where}: could not connect: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      clients.push(client);
+      if (!client.getServerCapabilities()?.extensions?.[INTERCEPTORS_EXTENSION]) {
+        throw new GatewayConfigError(`${where} does not declare the ${INTERCEPTORS_EXTENSION} extension`);
+      }
+      bound.push(...(await InterceptorInvoker.discover(client, { server: id, sendConfig: false })));
+    }
+    const duplicates = duplicateInterceptors(bound);
+    if (duplicates.length) throw new GatewayConfigError(`Interceptor names must be unique across servers: ${duplicates.join("; ")}`);
+    const names = bound.map((b) => b.definition.name);
     const overrides = loaded.gateway.interceptorOverrides;
     const problems = checkOverrides(bound.map((b) => b.definition), overrides);
     if (problems.length) throw new GatewayConfigError(`gateway.interceptorOverrides: ${problems.join("; ")}`);
+    const late = mutatorsAfter(bound, LABEL_INTERCEPTOR, overrides);
+    if (late.length) {
+      log.warn(`${late.join(", ")} run after ${LABEL_INTERCEPTOR} and could change or drop its label; give them a lower priorityHint`);
+    }
     for (const name of [POLICY_INTERCEPTOR, LABEL_INTERCEPTOR]) {
       const o = overrides[name];
       if (o?.mode === "audit" || o?.failOpen === true || o?.hooks) {
