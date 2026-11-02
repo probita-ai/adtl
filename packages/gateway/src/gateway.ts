@@ -115,6 +115,8 @@ export interface AdtlGatewayOptions {
   approverRoles?: Map<string, string[]>;
   /** Also ask for approval in the MCP client, when it supports elicitation. */
   elicitApprovals?: boolean;
+  /** The (sub-)agent this gateway serves, recorded on every audit entry. */
+  agent?: { id: string; type?: string };
 }
 
 /**
@@ -174,6 +176,7 @@ export class AdtlGateway {
   private readonly approvals: ApprovalBroker | undefined;
   private readonly authorizers: Authorizer[];
   private readonly principal: Principal;
+  private readonly agent: { agent: { id: string; type?: string } } | Record<string, never>;
   private readonly approverRoles: Map<string, string[]>;
   private readonly elicitApprovals: boolean;
   /** The server the agent is connected to, for elicitation. */
@@ -193,6 +196,7 @@ export class AdtlGateway {
     this.approvals = opts.approvals;
     this.authorizers = opts.authorizer === undefined ? [] : [opts.authorizer].flat();
     this.principal = opts.principal ?? { type: "anonymous" };
+    this.agent = opts.agent ? { agent: opts.agent } : {};
     this.approverRoles = opts.approverRoles ?? new Map();
     this.elicitApprovals = opts.elicitApprovals === true;
   }
@@ -450,6 +454,7 @@ export class AdtlGateway {
       this.audit?.write({
         ts: context.timestamp!,
         sessionId: this.sessionId,
+        ...this.agent,
         event,
         server: upstream,
         ...target,
@@ -525,7 +530,7 @@ export class AdtlGateway {
       server: route.upstream,
       ...(route.annotations ? { toolAnnotations: route.annotations } : {}),
     };
-    const base = { sessionId: this.sessionId, event: "tools/call" as const, server: route.upstream, tool: route.tool };
+    const base = { sessionId: this.sessionId, ...this.agent, event: "tools/call" as const, server: route.upstream, tool: route.tool };
     let denied: Denial | undefined;
     const ran: InterceptorRun[] = [];
     const finish = (entry: Omit<AuditEntry, keyof typeof base | "ts" | "durationMs">) =>

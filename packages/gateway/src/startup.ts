@@ -192,10 +192,21 @@ export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string): P
  * Under Claude Code, which passes `CLAUDE_CODE_SESSION_ID` to stdio MCP
  * servers, the gateway uses that id and keeps session labels in files, so the
  * Claude Code hooks (`adtl-gateway hook`) add to the same session label.
+ *
+ * `ADTL_SESSION_ID` does the same for any agent framework, and wins over
+ * Claude Code's: a sub-agent's gateway started with its parent's session id
+ * starts from the parent's label, and what it reads taints the parent too.
  */
 export function sharedSession(env: NodeJS.ProcessEnv): { sessionId: string; dir: string } | undefined {
-  const sessionId = env.CLAUDE_CODE_SESSION_ID?.trim();
+  const sessionId = env.ADTL_SESSION_ID?.trim() || env.CLAUDE_CODE_SESSION_ID?.trim();
   return sessionId ? { sessionId, dir: defaultSessionsDir(env) } : undefined;
+}
+
+/** `ADTL_AGENT_ID` (and `ADTL_AGENT_TYPE`): which agent this gateway serves, for the audit log. */
+export function gatewayAgent(env: NodeJS.ProcessEnv): { id: string; type?: string } | undefined {
+  const id = env.ADTL_AGENT_ID?.trim();
+  const type = env.ADTL_AGENT_TYPE?.trim();
+  return id ? { id, ...(type ? { type } : {}) } : undefined;
 }
 
 export interface StartedGateway {
@@ -313,8 +324,11 @@ export async function startGateway(
       if (!principal) log.warn('roles are set but gateway.principal is not: only roles with members ["*"] apply');
     }
     for (const a of authorizers) if (a.name !== "roles") log.info(`authorizer: ${a.name}`);
+    const agent = gatewayAgent(env);
+    if (agent) log.info(`agent: ${agent.id}${agent.type ? ` (${agent.type})` : ""}`);
     const gateway = new AdtlGateway({
       ...(shared ? { sessionId: shared.sessionId } : {}),
+      ...(agent ? { agent } : {}),
       upstreams,
       invoker,
       ...(auditLog ? { audit: auditLog } : {}),

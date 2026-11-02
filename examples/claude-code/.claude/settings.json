@@ -36,6 +36,18 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/../../packages/gateway/dist/cli.js\" hook --config \"$CLAUDE_PROJECT_DIR/../adtl.yaml\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

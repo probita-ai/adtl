@@ -1,6 +1,6 @@
 /**
  * `adtl-gateway hook --config adtl.yaml`: the command Claude Code runs for
- * PreToolUse, PostToolUse and PostToolUseFailure. Reads the hook event from
+ * PreToolUse, PostToolUse, PostToolUseFailure and SubagentStart. Reads the hook event from
  * stdin and answers on stdout (JSON) or stderr (with exit code 2).
  *
  * The config needs no `gateway:` section; if there is one, its `audit` log and
@@ -13,6 +13,7 @@ import { Ledger, defaultLedgerPath } from "@adtl/ledger";
 import { parseConfigText } from "@adtl/interceptors";
 import { parse as parseYaml } from "yaml";
 import { JsonlAuditLog } from "../audit.js";
+import { FileAgentLinks } from "./agentLinks.js";
 import { failure, handleHook, type HookInput, type HookOutcome } from "./claudeCode.js";
 
 export interface RunHookOptions {
@@ -46,6 +47,7 @@ export async function runHook(opts: RunHookOptions): Promise<HookOutcome> {
     return handleHook(input, {
       config,
       sessions: new FileSessionStore(sessionsDir),
+      agents: new FileAgentLinks(sessionsDir),
       ...(ledger ? { ledger } : {}),
       ...(opts.gatewayServer ? { gatewayServer: opts.gatewayServer } : {}),
       mode: gw.mode === "audit" ? "audit" : "active",

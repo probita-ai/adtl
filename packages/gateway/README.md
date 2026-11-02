@@ -299,7 +299,8 @@ The gateway only sees MCP calls. Claude Code's own tools (`WebFetch`, `WebSearch
   "hooks": {
     "PreToolUse":         [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10, "onFailure": "block" }] }],
     "PostToolUse":        [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }],
-    "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }]
+    "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }],
+    "SubagentStart":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }]
   }
 }
 ```
@@ -313,7 +314,7 @@ What it does:
 - **It shares one session label with the gateway.** Claude Code gives the gateway its session id (`CLAUDE_CODE_SESSION_ID`), and both keep the label in `~/.adtl/sessions/<id>.jsonl` (set `ADTL_SESSIONS_DIR` to change the directory). A `WebFetch` taints the session for `github__add_comment`, and a private file read through the gateway counts against a later `Bash` call. Labels last for the whole Claude Code session, including `--resume`.
 - **It covers MCP servers that skip the gateway**, such as connectors added in claude.ai. Their tools are labeled as their server name (`mcp__<server>__<tool>` → server `<server>`), so you can describe them under `servers:` like any upstream. The gateway's own tools (`mcp__adtl__*`) are skipped; pass `--gateway-server <name>` if you registered the gateway under another name.
 - **It fails closed.** If the hook can't decide, it exits with code 2, which stops the call.
-- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. Calls made inside a subagent (the Task tool) carry `"agent": { id, type }`. Their labels count toward the session id Claude Code gives the hook; if that is the parent's id, as the hook docs suggest, a subagent that reads untrusted content taints the parent too. The config needs no `gateway:` section if you only use the hooks.
+- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. Calls made inside a sub-agent carry `"agent": { id, type }`; see [Sub-agents](#sub-agents). The config needs no `gateway:` section if you only use the hooks.
 
 Built-in labels, which you can override under `servers.claude-code.tools`:
 
@@ -329,6 +330,20 @@ Built-in labels, which you can override under `servers.claude-code.tools`:
 With the [example policy](../../examples/adtl.yaml), `Bash` and `WebFetch` run freely in a fresh session, but ask first once the session has read untrusted content, because `no-public-write-after-untrusted` matches `tool.egress: [public, external, unknown]`.
 
 The hook also refuses `Write` and `Edit` on your ADTL config and session files, and asks before shell commands that mention the session directory, so the agent can't simply clear its own taint. This is a speed bump, not a sandbox.
+
+### Sub-agents
+
+A sub-agent starts from its parent's label, and what it reads taints the parent: the two share one session label. A sub-agent's answer mixes everything it saw, so sharing is the only safe default.
+
+- **Claude Code.** MCP calls from sub-agents go through the same gateway, so they share its session anyway. For built-in tools, the `SubagentStart` hook (in the snippet above) records which session each sub-agent was started in. Its later hook calls then use the parent's label even if Claude Code reports a session id of its own for them; Claude Code's docs suggest it reports the parent's. Audit entries name the sub-agent: `"agent": { "id": "…", "type": "Explore" }`.
+- **Other frameworks.** Start each sub-agent's gateway with its parent's session id and its own agent id:
+
+  ```sh
+  ADTL_SESSION_ID=<parent session> ADTL_AGENT_ID=researcher-1 ADTL_AGENT_TYPE=researcher \
+    npx -y @adtl/gateway --config adtl.yaml
+  ```
+
+  `ADTL_SESSION_ID` keeps the label in the shared session files (`ADTL_SESSIONS_DIR`, default `~/.adtl/sessions`), like `CLAUDE_CODE_SESSION_ID` does, and wins over it. `ADTL_AGENT_ID` and `ADTL_AGENT_TYPE` go on every audit entry.
 
 ## Label ledger
 

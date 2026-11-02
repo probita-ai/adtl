@@ -8,6 +8,8 @@
  *                       allow → no answer, so Claude Code's own permissions apply
  *   PostToolUse         labels the tool's output and adds it to the session label
  *   PostToolUseFailure  same: a failed tool's error output still reaches the model
+ *   SubagentStart       links the new sub-agent to its parent's session, so its
+ *                       calls start from the parent's label and taint it
  *
  * Built-in tools are labeled as the server `claude-code` (see preset.ts); MCP
  * tools `mcp__<server>__<tool>` as `<server>`. Tools of the gateway's own MCP
@@ -33,11 +35,13 @@ import {
   type AdtlConfig,
   type Decision,
   type PolicyDecision,
+  type Label,
   type SessionStore,
   join,
 } from "@adtl/labels";
 import { chunkHashes, valueHashes, type Ledger } from "@adtl/ledger";
 import type { AuditEntry, AuditSink } from "../audit.js";
+import type { AgentLinks } from "./agentLinks.js";
 import { CLAUDE_CODE_PRESET, CLAUDE_CODE_SERVER } from "./preset.js";
 
 export interface HookInput {
@@ -64,6 +68,8 @@ export interface HookOptions {
   audit?: AuditSink;
   /** Label ledger shared with the gateway. */
   ledger?: Ledger;
+  /** Sub-agent → parent session links, from SubagentStart. */
+  agents?: AgentLinks;
   /** Files the agent must not change: the ADTL config, the session directory and the ledger. */
   protect?: { configPath?: string; sessionsDir?: string; ledgerPath?: string; auditPath?: string; signingKeyPath?: string };
 }
@@ -172,19 +178,37 @@ export function addedLines(output: unknown): string[] {
   return out;
 }
 
+/**
+ * The session whose label a hook call reads and adds to: a linked sub-agent's
+ * parent session, else the call's own. When the two differ, the sub-agent's own
+ * label is read too, so nothing it saw is lost.
+ */
+function sessionFor(input: HookInput & { session_id: string }, opts: HookOptions): { id: string; get(): Label } {
+  const parent = typeof input.agent_id === "string" ? opts.agents?.parentOf(input.agent_id) : undefined;
+  if (!parent || parent === input.session_id) return { id: input.session_id, get: () => opts.sessions.get(input.session_id) };
+  return { id: parent, get: () => join(opts.sessions.get(parent), opts.sessions.get(input.session_id)) };
+}
+
 export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
   const event = input.hook_event_name;
+  if (event === "SubagentStart") {
+    if (typeof input.agent_id === "string" && typeof input.session_id === "string" && input.session_id !== "") {
+      opts.agents?.link(input.agent_id, input.session_id);
+    }
+    return NOTHING;
+  }
   if (event !== "PreToolUse" && event !== "PostToolUse" && event !== "PostToolUseFailure") return NOTHING;
   if (typeof input.tool_name !== "string" || typeof input.session_id !== "string" || input.session_id === "") {
     return failure(event, "hook input has no tool_name or session_id");
   }
+  const session = sessionFor(input as HookInput & { session_id: string }, opts);
   const route = routeTool(input.tool_name, opts.gatewayServer);
   if (!route) return NOTHING;
   const config = withClaudeCodePreset(opts.config);
   const ts = new Date().toISOString();
   const agent =
     typeof input.agent_id === "string" ? { agent: { id: input.agent_id, ...(typeof input.agent_type === "string" ? { type: input.agent_type } : {}) } } : {};
-  const base = { ts, sessionId: input.session_id, event: "tools/call" as const, ...route, via: "claude-code-hook" as const, ...agent };
+  const base = { ts, sessionId: session.id, event: "tools/call" as const, ...route, via: "claude-code-hook" as const, ...agent };
 
   if (event !== "PreToolUse") {
     const output = input.tool_response ?? input.error ?? null;
@@ -197,20 +221,20 @@ export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
         ledger = { chunks: match.chunks, writers: match.writers };
       }
       // What the tool was given came from the session as it was before this output.
-      const before = opts.sessions.get(input.session_id);
+      const before = session.get();
       const written = [...valueHashes(input.tool_input ?? {}), ...addedLines(output).flatMap(chunkHashes)];
-      opts.ledger.record(written, before, input.session_id, route);
+      opts.ledger.record(written, before, session.id, route);
     }
-    const sessionLabel = opts.sessions.observe(input.session_id, label);
+    const sessionLabel = join(session.get(), opts.sessions.observe(session.id, label));
     opts.audit?.write({ ...base, outcome: "forwarded", label, ...(ledger ? { ledger } : {}), sessionLabel, durationMs: 0 });
     return NOTHING;
   }
 
   const hash = callHash(route.server, route.tool, input.tool_input ?? {});
-  const session = opts.sessions.get(input.session_id);
+  const current = session.get();
   const guard = protectedTarget(input, route, opts.protect);
   const policy: PolicyDecision = evaluatePolicy(config.policy, {
-    session,
+    session: current,
     ...route,
     egress: toolEgress(config, route.server, route.tool),
   });
@@ -229,7 +253,7 @@ export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
     reason: d.reason,
     matched: d.matched,
     callHash: hash,
-    sessionLabel: session,
+    sessionLabel: current,
     durationMs: 0,
   };
   opts.audit?.write(entry);

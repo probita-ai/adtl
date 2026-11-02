@@ -11,6 +11,7 @@ Not released yet.
 - `checkOverrides()`, `resolvePriority()` and the `InterceptorOverrides` type are exported.
 - The gateway passes a request's `_meta` on to the upstream when a mutator sets it (used for fides-gateway labels).
 - More interceptor servers ([#51](https://github.com/probita-ai/adtl/issues/51)): `gateway.interceptorServers.<id>` adds stdio or Streamable HTTP interceptor servers whose interceptors run beside ADTL's, each invoked on the server that advertised it. They don't get ADTL's per-call `config`. Startup stops on an unreachable server, a missing extension capability or a duplicate interceptor name, and warns about mutators that run after `adtl.label`.
+- Sub-agents ([#17](https://github.com/probita-ai/adtl/issues/17)): a sub-agent shares its parent's session label. The Claude Code hook handles `SubagentStart`, linking each sub-agent to the session it was started in, so its built-in tool calls use the parent's label even if they report a session id of their own (add `SubagentStart` to your hooks; see the README). For other frameworks, `ADTL_SESSION_ID` makes a gateway join a parent's session (it wins over `CLAUDE_CODE_SESSION_ID`), and `ADTL_AGENT_ID` / `ADTL_AGENT_TYPE` tag every audit entry with `agent`.
 - `init` drafts egress from a tool's action-metadata `destination` ahead of `readOnlyHint` / `openWorldHint`.
 
 ### `@adtl/labels`
