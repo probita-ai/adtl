@@ -54,6 +54,8 @@ import {
   stampRecordLabel,
   toolEgress,
   readActionMetadata,
+  FIDES_LABELS_KEY,
+  fidesLabels,
   type AdtlConfig,
   type Decision,
   type Label,
@@ -257,12 +259,17 @@ export class AdtlInterceptors {
     const rule = tool === undefined ? undefined : this.config.servers[config.server]?.tools[tool];
     const field = rule?.labelInto;
     const scopeField = rule?.scopeInto;
+    const fides = this.config.fides.emit;
     const unchanged: MutationResult = { interceptor: LABEL_INTERCEPTOR, type: "mutation", phase: params.phase, modified: false, payload: params.payload };
-    if (field === undefined && scopeField === undefined) return unchanged;
+    if (field === undefined && scopeField === undefined && !fides) return unchanged;
 
     const sessionId = params.context?.sessionId;
     if (!sessionId) return { ...unchanged, info: { warning: "No context.sessionId: the record was not stamped or scoped" } };
     const label = this.sessions.get(sessionId);
+    // fides-gateway reads the caller's label from the request's _meta: "$" covers the name and every argument.
+    const meta = fides
+      ? { _meta: { ...(isRecord(rpcParams._meta) ? rpcParams._meta : {}), [FIDES_LABELS_KEY]: fidesLabels(label, this.fidesReaders(params)) } }
+      : {};
     let args = isRecord(rpcParams.arguments) ? rpcParams.arguments : {};
     try {
       if (field !== undefined) args = stampRecordLabel(args, field, label, sessionId);
@@ -270,8 +277,8 @@ export class AdtlInterceptors {
     } catch (err) {
       throw new InterceptorError(ErrorCodes.InvalidParams, `${LABEL_INTERCEPTOR}: ${(err as Error).message}`, { interceptor: LABEL_INTERCEPTOR });
     }
-    if (args === rpcParams.arguments) return unchanged;
-    const next = { ...rpcParams, arguments: args };
+    if (args === rpcParams.arguments && !fides) return unchanged;
+    const next = { ...rpcParams, arguments: args, ...meta };
     return {
       ...unchanged,
       modified: true,
@@ -279,8 +286,16 @@ export class AdtlInterceptors {
       info: {
         ...(field !== undefined ? { stamped: field } : {}),
         ...(scopeField !== undefined && args[scopeField] !== undefined ? { scope: args[scopeField] } : {}),
+        ...(fides ? { fides: true } : {}),
       },
     };
+  }
+
+  /** fides-gateway readers for private data: the config's, else the principal running the gateway, else nobody. */
+  private fidesReaders(params: InvocationParams): string[] {
+    if (this.config.fides.readers) return this.config.fides.readers;
+    const p = params.context?.principal;
+    return p && p.type !== "anonymous" && p.id ? [p.id] : [];
   }
 
   private label(params: InvocationParams, config: InvocationConfig): MutationResult {
@@ -359,7 +374,7 @@ export class AdtlInterceptors {
       info.warning = "No context.sessionId: the result was labeled but not recorded in any session";
     }
 
-    const labeled = attachLabel(result, label);
+    const labeled = attachLabel(result, label, this.config.fides.emit ? { fides: { readers: this.fidesReaders(params) } } : {});
     return {
       interceptor: LABEL_INTERCEPTOR,
       type: "mutation",

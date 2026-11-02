@@ -380,6 +380,23 @@ servers:
 - **Tools that return text without metadata** can't carry the label, and the ledger can't recognize extracted text. Give them a strict rule, such as `integrity: untrusted`. In Mem0 that is `history()`, and on Mem0's hosted MCP server `list_events` and `get_event_status`.
 - **Servers that drop or replace metadata** (when they consolidate records, or an update overwrites the metadata instead of merging it) can't carry the label either. Give their read tools a strict rule.
 
+## FIDES and fides-gateway
+
+ADTL's labels map onto [FIDES](https://arxiv.org/abs/2505.23643), the information-flow model behind Microsoft's [fides-gateway](https://github.com/microsoft/fides-gateway), so the two can sit in one chain.
+
+- **Reading** is always on. Results that carry fides-gateway labels (`_meta["com.github.ifc/labels"]`, JSONPath → `{ integrity, confidentiality: [readers] }`) count as the server's own claims, like trust-annotations: they can make a label stricter, and relax it only with `acceptServerClaims: true`. Any reader list without `"public"` means `private`, and the strictest path wins.
+- **Writing** is opt-in:
+
+  ```yaml
+  fides:
+    emit: true
+    readers: [alice@example.com]   # optional: who may read private data; default: gateway.principal.id, else nobody
+  ```
+
+  Results then also carry the label in fides-gateway's form, and every outgoing tool call carries the session's label in its `_meta` (one `"$"` entry, which covers the name and every argument), so a fides-gateway behind ADTL can enforce on it.
+
+FIDES has two integrity levels, so `unknown` becomes `untrusted`. It has reader sets instead of levels, so `private` and `secret` both become the configured readers. To check the mapping against fides-gateway's own code, see [examples/fides-interop](../../examples/fides-interop).
+
 ## How it works
 
 ```

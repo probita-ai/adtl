@@ -112,6 +112,16 @@ export const LedgerConfigSchema = z
   .strict();
 export type LedgerConfig = z.infer<typeof LedgerConfigSchema>;
 
+export const FidesConfigSchema = z
+  .object({
+    /** Attach fides-gateway labels to results, and the session's label to outgoing tool calls. */
+    emit: z.boolean().default(false),
+    /** Who may read private data, as fides-gateway reader ids. Default: the gateway principal's id, else nobody. */
+    readers: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type FidesConfig = z.infer<typeof FidesConfigSchema>;
+
 export const AdtlConfigSchema = z
   .object({
     /** Label for results with no matching rule. Restrictive by default. */
@@ -123,6 +133,8 @@ export const AdtlConfigSchema = z
     policy: PolicySchema.default({}),
     /** Label ledger: remembers content written by tainted sessions and re-labels it when it is read back. */
     ledger: LedgerConfigSchema.default({}),
+    /** Interop with FIDES / fides-gateway: also emit labels in its `_meta["com.github.ifc/labels"]` form. */
+    fides: FidesConfigSchema.default({}),
     /** Settings for adtl-gateway (upstream servers, audit log). Validated by the gateway, ignored here. */
     gateway: z.unknown().optional(),
   })

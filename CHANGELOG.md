@@ -9,6 +9,7 @@ Not released yet.
 - The audit log's `interceptors` entries now carry `timeoutMs`, and `modeFrom` / `failOpenFrom` say `override` when an override applies.
 - The invoker enforces each interceptor's timeout itself, so an interceptor client that ignores the timeout can no longer hang a call.
 - `checkOverrides()`, `resolvePriority()` and the `InterceptorOverrides` type are exported.
+- The gateway passes a request's `_meta` on to the upstream when a mutator sets it (used for fides-gateway labels).
 - More interceptor servers ([#51](https://github.com/probita-ai/adtl/issues/51)): `gateway.interceptorServers.<id>` adds stdio or Streamable HTTP interceptor servers whose interceptors run beside ADTL's, each invoked on the server that advertised it. They don't get ADTL's per-call `config`. Startup stops on an unreachable server, a missing extension capability or a duplicate interceptor name, and warns about mutators that run after `adtl.label`.
 - `init` drafts egress from a tool's action-metadata `destination` ahead of `readOnlyHint` / `openWorldHint`.
 
@@ -16,9 +17,15 @@ Not released yet.
 - Draft action-metadata ([#52](https://github.com/probita-ai/adtl/issues/52)): `returnMetadata.source` and `.sensitivity` feed result labels, `inputMetadata.destination` feeds egress, and `outcome` / `requiresReview` are new policy conditions (`tool.outcome`, `tool.requiresReview`). Claims from any server can make labels or egress stricter; relaxing needs `acceptServerClaims: true` and never overrides your rules.
 - `requiresReview: true` turns an `allow` into an `ask` (`matched: ["tool.requiresReview"]`). Turn it off with `policy.honorRequiresReview: false`.
 - `readActionMetadata()` and the mapping helpers are exported; `toolEgress()` takes the tool's annotations as an optional fourth argument.
+- FIDES interop ([#19](https://github.com/probita-ai/adtl/issues/19)): fides-gateway labels on results (`_meta["com.github.ifc/labels"]`) are read as server claims, stricter-only unless the server is allowlisted. With `fides: { emit: true, readers? }`, labeled results also carry the label in that form. `toFidesRecord()` and `fidesEvidenceRef()` build the trust-annotations `ifc.fides.v1` scheme record.
+- `attachLabel()` takes an options argument (`{ fides: { readers } }`), and `unionClaims()` is exported.
 
 ### `@adtl/interceptors`
+- With `fides.emit`, `adtl.label` puts the session's label on every outgoing `tools/call` request, as `_meta["com.github.ifc/labels"]["$"]`. Readers come from `fides.readers`, else the call's principal, else nobody.
 - `adtl.policy` reads action-metadata from `config.toolAnnotations`, which the gateway already passes from `tools/list`.
+
+### Examples
+- `examples/fides-interop`: an opt-in check that runs ADTL's emitted labels through fides-gateway's own models and label resolution, in your local fides-gateway checkout. Not part of `npm test`.
 
 ## 0.7.0 — experimental
 

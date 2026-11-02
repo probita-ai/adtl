@@ -630,7 +630,9 @@ export class AdtlGateway {
     // 2. Forward to the upstream server.
     let result: CallToolResult;
     try {
-      result = (await client.callTool({ name: forwarded.name, arguments: forwarded.arguments })) as CallToolResult;
+      // A mutator may add request _meta (e.g. fides-gateway labels); pass it on.
+      const meta = (forwarded as { _meta?: Record<string, unknown> })._meta;
+      result = (await client.callTool({ name: forwarded.name, arguments: forwarded.arguments, ...(meta ? { _meta: meta } : {}) })) as CallToolResult;
     } catch (err) {
       const reason = (err as Error).message;
       finish({ outcome: "upstream_error", ...(decision ? { decision } : {}), ...approved, reason, callHash: policy.callHash, ...(audit ? { mode: "audit" as const } : {}), warnings: req.warnings });

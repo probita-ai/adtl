@@ -8,7 +8,7 @@
  * 3. The tool's `openWorldHint` annotation (open-world tools are untrusted).
  * 4. The global default (restrictive: untrusted + private).
  *
- * Server-provided trust-annotations and action-metadata are then applied:
+ * Server-provided trust-annotations (and fides-gateway labels) and action-metadata are then applied:
  * - Claims that make the label stricter are always accepted.
  * - Claims that relax it are accepted only from servers with
  *   `acceptServerClaims: true`, and never override an explicit config rule.
@@ -19,7 +19,8 @@
 import { destinationEgress, readActionMetadata, sensitivityConfidentiality, sourceIntegrity } from "./actionMetadata.js";
 import type { AdtlConfig, Egress, ToolRule } from "./config.js";
 import { higherConfidentiality, lowerIntegrity, type Confidentiality, type Integrity, type Label } from "./label.js";
-import { readClaims } from "./trustAnnotations.js";
+import { readFidesClaims } from "./fides.js";
+import { readClaims, unionClaims } from "./trustAnnotations.js";
 
 export interface LabelInput {
   server: string;
@@ -66,7 +67,9 @@ export function labelResult(input: LabelInput, config: AdtlConfig): Label {
   if (metaIntegrity !== undefined) integrity = lowerIntegrity(integrity, metaIntegrity);
   if (metaConfidentiality !== undefined) confidentiality = higherConfidentiality(confidentiality, metaConfidentiality);
 
-  const claims = readClaims(input.result);
+  // fides-gateway labels count like trust-annotations: the server's own claims.
+  const fides = readFidesClaims(input.result);
+  const claims = fides ? unionClaims(readClaims(input.result), fides) : readClaims(input.result);
 
   if (claims.untrusted === true) integrity = "untrusted";
   else if (claims.untrusted === false && mayRelax && configuredIntegrity === undefined) integrity = "trusted";
