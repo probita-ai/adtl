@@ -89,9 +89,10 @@ v0.6 adds authorization and stronger evidence. Roles in `adtl.yaml` say who may 
 
 v0.7 runs the exfiltration attack against [GitHub's real MCP server](examples/github-real-demo), labeled by the `github` preset, and adds [Cedar policies](packages/gateway#cedar-policies) for authorization rules roles can't express, such as working hours or tool arguments.
 
+v0.8 carries labels across hops: sub-agents share their parent's label (`SubagentStart` hook in Claude Code, `ADTL_SESSION_ID` elsewhere), a [draft A2A extension](docs/a2a-trust-labels-v1.md) signs labels onto agent-to-agent messages, and labels map to and from [FIDES](packages/gateway#fides-and-fides-gateway) and fides-gateway. It also follows the latest drafts: [per-interceptor overrides](packages/gateway#interceptor-overrides) and [more interceptor servers](packages/gateway#more-interceptor-servers) from SEP-2624, and tools that describe themselves with [action-metadata](packages/gateway#tools-that-describe-themselves-action-metadata). Record labels survive memory servers whose updates replace metadata (`recordIds`).
+
 Planned next:
 
-- **v0.8:** labels carried across sub-agents and A2A, and interop with FIDES
 - **Later:** an OpenFGA adapter for relationship-based authorization
 
 Help is very welcome: see the [open issues](https://github.com/probita-ai/adtl/issues), especially the ones marked [help wanted](https://github.com/probita-ai/adtl/labels/help%20wanted).

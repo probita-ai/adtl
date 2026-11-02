@@ -80,7 +80,7 @@ export const POLICY_INTERCEPTOR = "adtl.policy";
 /** Key in `ValidationResult.info` carrying ADTL's decision, for invokers that predate `confirmation`. */
 export const DECISION_INFO_KEY = "adtl/decision";
 
-export const VERSION = "0.7.0";
+export const VERSION = "0.8.0";
 
 /** JSON-RPC error codes used for invocation errors. */
 export const ErrorCodes = {

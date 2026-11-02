@@ -2,7 +2,12 @@
 
 ## 0.8.0 — experimental
 
-Not released yet.
+Labels follow data across more hops: into sub-agents, over A2A, and to and from FIDES / fides-gateway. The gateway catches up with the latest SEP-2624 and Tool Annotations IG drafts: per-interceptor overrides, interceptors from several servers, and tools that describe themselves with action-metadata.
+
+### Upgrading
+- No config changes are needed. Everything new is opt-in, with two exceptions that only make things stricter: a tool whose action-metadata says `requiresReview: true` now gets `ask` when no rule blocks it (`policy.honorRequiresReview: false` turns that off), and fides-gateway labels on results are now read as server claims.
+- Claude Code: add a `SubagentStart` hook running `adtl-gateway hook`, as in the README, so sub-agents are linked to their parent's session.
+- Audit entries for interceptor runs have a new `timeoutMs` field.
 
 ### `@adtl/gateway`
 - Per-interceptor overrides ([#50](https://github.com/probita-ai/adtl/issues/50)): `gateway.interceptorOverrides.<name>` sets `failOpen`, `priorityHint`, `mode`, `timeoutMs` and `hooks` for one interceptor, as SEP-2624's Invoker Overrides describe. Hooks can only be narrowed; an override that widens them, or names an interceptor the server doesn't offer, stops startup. `gateway.mode: audit` still wins over a per-interceptor `mode`, and overrides that relax `adtl.policy` or `adtl.label` log a warning.
