@@ -4,6 +4,7 @@ export * from "./recordLabel.js";
 export * from "./trustAnnotations.js";
 export * from "./actionMetadata.js";
 export * from "./fides.js";
+export * from "./a2a.js";
 export * from "./config.js";
 export * from "./labeler.js";
 export * from "./policy.js";

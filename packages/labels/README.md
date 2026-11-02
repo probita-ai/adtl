@@ -8,6 +8,8 @@ The core of ADTL, with no MCP transport and no I/O:
 - **trust-annotations codec**: reads and writes `_meta["io.modelcontextprotocol/trust-annotations"]` following the draft's rules. An absent field means "no claim". A content block can add restrictions but never remove them.
 - **Labeling rules**: your config decides labels. Servers' own claims (trust-annotations on results, the draft `action-metadata` on tools) can make labels stricter, and can relax them only when the server is allowlisted.
 - **Policy evaluation**: `allow` / `ask` / `block`. The most restrictive matching rule wins.
+- **FIDES interop**: reads and writes fides-gateway's `_meta["com.github.ifc/labels"]`, and builds `ifc.fides.v1` evidence.
+- **A2A labels**: `signA2ALabel` / `readA2ALabel` carry a signed label on A2A messages and artifacts ([draft extension](../../docs/a2a-trust-labels-v1.md)).
 - **Call hashing**: canonical JSON (RFC 8785 style) and SHA-256, so a decision is bound to one exact call.
 
 ```ts

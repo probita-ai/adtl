@@ -19,6 +19,7 @@ Not released yet.
 - `requiresReview: true` turns an `allow` into an `ask` (`matched: ["tool.requiresReview"]`). Turn it off with `policy.honorRequiresReview: false`.
 - `readActionMetadata()` and the mapping helpers are exported; `toolEgress()` takes the tool's annotations as an optional fourth argument.
 - FIDES interop ([#19](https://github.com/probita-ai/adtl/issues/19)): fides-gateway labels on results (`_meta["com.github.ifc/labels"]`) are read as server claims, stricter-only unless the server is allowlisted. With `fides: { emit: true, readers? }`, labeled results also carry the label in that form. `toFidesRecord()` and `fidesEvidenceRef()` build the trust-annotations `ifc.fides.v1` scheme record.
+- A2A trust labels ([#18](https://github.com/probita-ai/adtl/issues/18)): a draft A2A extension, [`docs/a2a-trust-labels-v1.md`](docs/a2a-trust-labels-v1.md), carries the sender's session label on A2A Messages and Artifacts, signed with its Ed25519 key and bound to the parts by digest. `signA2ALabel()` attaches it; `readA2ALabel()` checks it: a trusted key's label is used as is, another key's can only make things stricter, and a missing, malformed or broken one falls back to a restrictive label.
 - `attachLabel()` takes an options argument (`{ fides: { readers } }`), and `unionClaims()` is exported.
 
 ### `@adtl/interceptors`
@@ -26,6 +27,7 @@ Not released yet.
 - `adtl.policy` reads action-metadata from `config.toolAnnotations`, which the gateway already passes from `tools/list`.
 
 ### Examples
+- `examples/a2a-labels`: two agents pass a tainted summary over A2A; the receiver inherits the label and asks before posting, and a tampered message fails closed.
 - `examples/fides-interop`: an opt-in check that runs ADTL's emitted labels through fides-gateway's own models and label resolution, in your local fides-gateway checkout. Not part of `npm test`.
 
 ## 0.7.0 — experimental
