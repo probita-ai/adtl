@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.8.0 — experimental
+
+Labels follow data across more hops: into sub-agents, over A2A, and to and from FIDES / fides-gateway. The gateway catches up with the latest SEP-2624 and Tool Annotations IG drafts: per-interceptor overrides, interceptors from several servers, and tools that describe themselves with action-metadata.
+
+### Upgrading
+- No config changes are needed. Everything new is opt-in, with two exceptions that only make things stricter: a tool whose action-metadata says `requiresReview: true` now gets `ask` when no rule blocks it (`policy.honorRequiresReview: false` turns that off), and fides-gateway labels on results are now read as server claims.
+- Claude Code: add a `SubagentStart` hook running `adtl-gateway hook`, as in the README, so sub-agents are linked to their parent's session.
+- Audit entries for interceptor runs have a new `timeoutMs` field.
+
+### `@adtl/gateway`
+- Per-interceptor overrides ([#50](https://github.com/probita-ai/adtl/issues/50)): `gateway.interceptorOverrides.<name>` sets `failOpen`, `priorityHint`, `mode`, `timeoutMs` and `hooks` for one interceptor, as SEP-2624's Invoker Overrides describe. Hooks can only be narrowed; an override that widens them, or names an interceptor the server doesn't offer, stops startup. `gateway.mode: audit` still wins over a per-interceptor `mode`, and overrides that relax `adtl.policy` or `adtl.label` log a warning.
+- The audit log's `interceptors` entries now carry `timeoutMs`, and `modeFrom` / `failOpenFrom` say `override` when an override applies.
+- The invoker enforces each interceptor's timeout itself, so an interceptor client that ignores the timeout can no longer hang a call.
+- `checkOverrides()`, `resolvePriority()` and the `InterceptorOverrides` type are exported.
+- The gateway passes a request's `_meta` on to the upstream when a mutator sets it (used for fides-gateway labels).
+- More interceptor servers ([#51](https://github.com/probita-ai/adtl/issues/51)): `gateway.interceptorServers.<id>` adds stdio or Streamable HTTP interceptor servers whose interceptors run beside ADTL's, each invoked on the server that advertised it. They don't get ADTL's per-call `config`. Startup stops on an unreachable server, a missing extension capability or a duplicate interceptor name, and warns about mutators that run after `adtl.label`.
+- Sub-agents ([#17](https://github.com/probita-ai/adtl/issues/17)): a sub-agent shares its parent's session label. The Claude Code hook handles `SubagentStart`, linking each sub-agent to the session it was started in, so its built-in tool calls use the parent's label even if they report a session id of their own (add `SubagentStart` to your hooks; see the README). For other frameworks, `ADTL_SESSION_ID` makes a gateway join a parent's session (it wins over `CLAUDE_CODE_SESSION_ID`), and `ADTL_AGENT_ID` / `ADTL_AGENT_TYPE` tag every audit entry with `agent`.
+- `init` drafts egress from a tool's action-metadata `destination` ahead of `readOnlyHint` / `openWorldHint`.
+
+### `@adtl/labels`
+- Draft action-metadata ([#52](https://github.com/probita-ai/adtl/issues/52)): `returnMetadata.source` and `.sensitivity` feed result labels, `inputMetadata.destination` feeds egress, and `outcome` / `requiresReview` are new policy conditions (`tool.outcome`, `tool.requiresReview`). Claims from any server can make labels or egress stricter; relaxing needs `acceptServerClaims: true` and never overrides your rules.
+- `requiresReview: true` turns an `allow` into an `ask` (`matched: ["tool.requiresReview"]`). Turn it off with `policy.honorRequiresReview: false`.
+- `readActionMetadata()` and the mapping helpers are exported; `toolEgress()` takes the tool's annotations as an optional fourth argument.
+- FIDES interop ([#19](https://github.com/probita-ai/adtl/issues/19)): fides-gateway labels on results (`_meta["com.github.ifc/labels"]`) are read as server claims, stricter-only unless the server is allowlisted. With `fides: { emit: true, readers? }`, labeled results also carry the label in that form. `toFidesRecord()` and `fidesEvidenceRef()` build the trust-annotations `ifc.fides.v1` scheme record.
+- A2A trust labels ([#18](https://github.com/probita-ai/adtl/issues/18)): a draft A2A extension, [`docs/a2a-trust-labels-v1.md`](docs/a2a-trust-labels-v1.md), carries the sender's session label on A2A Messages and Artifacts, signed with its Ed25519 key and bound to the parts by digest. `signA2ALabel()` attaches it; `readA2ALabel()` checks it: a trusted key's label is used as is, another key's can only make things stricter, and a missing, malformed or broken one falls back to a restrictive label.
+- `attachLabel()` takes an options argument (`{ fides: { readers } }`), and `unionClaims()` is exported.
+
+### `@adtl/interceptors`
+- Record ids ([#48](https://github.com/probita-ai/adtl/issues/48)): tool rule `recordIds: <field>` makes `adtl.label` remember a tainted session's writes by record id in the ledger (ids the write tool was given and returned), and join the label back on reads that return those ids. Labels on records now survive servers whose update replaces the metadata, as Mem0's hosted docs describe. Audit entries get `recordIds: { matched, writers }`.
+- With `fides.emit`, `adtl.label` puts the session's label on every outgoing `tools/call` request, as `_meta["com.github.ifc/labels"]["$"]`. Readers come from `fides.readers`, else the call's principal, else nobody.
+- `adtl.policy` reads action-metadata from `config.toolAnnotations`, which the gateway already passes from `tools/list`.
+
+### Examples
+- `examples/fake-memory` can act like Mem0's hosted platform as its docs describe it: `updateMode: "replace"` (`--update-replace`) replaces metadata on update, and `merge: true` (`--merge`) folds a barer record into a fuller one and hides it unless `search_memory` is called with `include_merged`. New tests cover both. Records added in one call now get distinct ids.
+- `examples/a2a-labels`: two agents pass a tainted summary over A2A; the receiver inherits the label and asks before posting, and a tampered message fails closed.
+- `examples/fides-interop`: an opt-in check that runs ADTL's emitted labels through fides-gateway's own models and label resolution, in your local fides-gateway checkout. Not part of `npm test`.
+
 ## 0.7.0 — experimental
 
 The exfiltration attack now runs against GitHub's real MCP server, and Cedar policies can decide who may use which tools.

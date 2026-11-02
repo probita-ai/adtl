@@ -83,7 +83,7 @@ describe("parseConfig", () => {
   it("fills restrictive defaults", () => {
     const c = parseConfig(undefined);
     expect(c.defaults).toEqual({ integrity: "untrusted", confidentiality: "private" });
-    expect(c.policy).toEqual({ default: "allow", rules: [] });
+    expect(c.policy).toEqual({ default: "allow", rules: [], honorRequiresReview: true });
   });
 
   it("rejects unknown keys and bad values", () => {

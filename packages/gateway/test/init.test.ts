@@ -20,6 +20,20 @@ describe("ruleFromHints", () => {
     expect(ruleFromHints(undefined).rule.egress).toBe("public");
   });
 
+  it("takes egress from action-metadata ahead of the legacy hints", () => {
+    const annotations = {
+      readOnlyHint: true,
+      openWorldHint: false,
+      "io.modelcontextprotocol/action-metadata": { inputMetadata: { destination: "external" }, outcome: "irreversible", requiresReview: true },
+    };
+    expect(ruleFromHints(annotations)).toEqual({
+      rule: { integrity: "untrusted", confidentiality: "private", egress: "external" },
+      why: "action-metadata: destination external, irreversible, requires review (review)",
+    });
+    const unknown = { readOnlyHint: true, "io.modelcontextprotocol/action-metadata": { inputMetadata: { destination: "moon" } } };
+    expect(ruleFromHints(unknown).rule.egress).toBe("external");
+  });
+
   it("never trusts a server's own hints for integrity or confidentiality", () => {
     expect(ruleFromHints({ readOnlyHint: true, openWorldHint: false }).rule).toMatchObject({
       integrity: "untrusted",

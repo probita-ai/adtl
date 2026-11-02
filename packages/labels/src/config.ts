@@ -47,6 +47,12 @@ export const ToolRuleSchema = z
     readLabels: z.boolean().optional(),
     /** Write tools: scope-id argument (e.g. `run_id`) that keeps a tainted session's writes in a scope of their own. */
     scopeInto: z.string().min(1).optional(),
+    /**
+     * Field naming record ids (e.g. `id`; `ids` lists are read too). With the ledger, a tainted session's
+     * writes are remembered by record id, and reads join the label back by id, even if the server
+     * replaced or dropped the record's stamps.
+     */
+    recordIds: z.string().min(1).optional(),
   })
   .strict();
 export type ToolRule = z.infer<typeof ToolRuleSchema>;
@@ -76,6 +82,10 @@ export const PolicyRuleSchema = z
         "tool.egress": oneOrMany(egress).optional(),
         /** `server.tool` names; `*` matches any run of characters, e.g. `github.*`. */
         tool: oneOrMany(z.string().min(1)).optional(),
+        /** The tool's action-metadata `outcome`, e.g. `irreversible`. Tools that declare none never match. */
+        "tool.outcome": oneOrMany(z.string().min(1)).optional(),
+        /** The tool's action-metadata `requiresReview`. Tools that declare none count as false. */
+        "tool.requiresReview": z.boolean().optional(),
       })
       .strict(),
     then: z.enum(DECISIONS),
@@ -91,6 +101,8 @@ export const PolicySchema = z
   .object({
     default: z.enum(DECISIONS).default("allow"),
     rules: z.array(PolicyRuleSchema).default([]),
+    /** Ask a human before tools whose action-metadata says `requiresReview: true`, when no rule blocks them. */
+    honorRequiresReview: z.boolean().default(true),
   })
   .strict();
 export type Policy = z.infer<typeof PolicySchema>;
@@ -106,6 +118,16 @@ export const LedgerConfigSchema = z
   .strict();
 export type LedgerConfig = z.infer<typeof LedgerConfigSchema>;
 
+export const FidesConfigSchema = z
+  .object({
+    /** Attach fides-gateway labels to results, and the session's label to outgoing tool calls. */
+    emit: z.boolean().default(false),
+    /** Who may read private data, as fides-gateway reader ids. Default: the gateway principal's id, else nobody. */
+    readers: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type FidesConfig = z.infer<typeof FidesConfigSchema>;
+
 export const AdtlConfigSchema = z
   .object({
     /** Label for results with no matching rule. Restrictive by default. */
@@ -117,6 +139,8 @@ export const AdtlConfigSchema = z
     policy: PolicySchema.default({}),
     /** Label ledger: remembers content written by tainted sessions and re-labels it when it is read back. */
     ledger: LedgerConfigSchema.default({}),
+    /** Interop with FIDES / fides-gateway: also emit labels in its `_meta["com.github.ifc/labels"]` form. */
+    fides: FidesConfigSchema.default({}),
     /** Settings for adtl-gateway (upstream servers, audit log). Validated by the gateway, ignored here. */
     gateway: z.unknown().optional(),
   })

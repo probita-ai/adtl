@@ -220,6 +220,14 @@ describe("adtl.policy", () => {
     expect(r.valid).toBe(true);
   });
 
+  it("reads action-metadata from the invoker's config: requiresReview asks", () => {
+    const call = policyCall("list_repos", {}, "s1");
+    const annotations = { "io.modelcontextprotocol/action-metadata": { requiresReview: true } };
+    const r = make().invoke({ ...call, config: { ...call.config, toolAnnotations: annotations } }) as ValidationResult;
+    expect(r.info).toMatchObject({ [DECISION_INFO_KEY]: "ask", matched: ["tool.requiresReview"] });
+    expect(r.confirmation).toBeDefined();
+  });
+
   it("fails closed without a session id", () => {
     const r = make().invoke(policyCall("list_repos")) as ValidationResult;
     expect(r).toMatchObject({ valid: false, severity: "error" });
@@ -253,5 +261,35 @@ describe("invocation errors", () => {
     expect(() => core.invoke({ ...policyCall("x", {}, "s"), phase: "response" })).toThrow(/does not hook/);
     expect(() => core.invoke({ ...policyCall("x", {}, "s"), event: "prompts/get" })).toThrow(/does not hook/);
     expect(() => core.invoke({ ...policyCall("x", {}, "s"), config: {} })).toThrow(/server/);
+  });
+});
+
+describe("fides-gateway interop (config fides.emit)", () => {
+  const FIDES = "com.github.ifc/labels";
+  const withFides = (fides: Record<string, unknown>) => new AdtlInterceptors({ config: { ...exampleConfig(), fides: { emit: true, ...fides } } });
+  const stamp = (core: AdtlInterceptors, context: Record<string, unknown>) =>
+    core.invoke({ ...policyCall("post_comment", { body: "hi" }), name: "adtl.label", context } as never) as MutationResult;
+
+  it("puts the session label on outgoing tool calls and on results, readers from the principal", () => {
+    const core = withFides({});
+    core.invoke({ ...labelCall("get_file", "API_KEY=...", "s1"), context: { sessionId: "s1", principal: { type: "user", id: "alice" } } });
+    const r = stamp(core, { sessionId: "s1", principal: { type: "user", id: "alice" } });
+    expect(r.modified).toBe(true);
+    const params = (r.payload as { params: { _meta: Record<string, unknown>; arguments: unknown } }).params;
+    expect(params._meta[FIDES]).toEqual({ $: { integrity: "trusted", confidentiality: ["alice"] } });
+    expect(params.arguments).toEqual({ body: "hi" });
+
+    const labeled = core.invoke({ ...labelCall("read_issue", "hi", "s1"), context: { sessionId: "s1" } }) as MutationResult;
+    const meta = (labeled.payload as { result: { _meta: Record<string, unknown> } }).result._meta;
+    // No principal on this call and no configured readers: private data has no readers.
+    expect(meta[FIDES]).toEqual({ $: { integrity: "untrusted", confidentiality: ["public"] } });
+  });
+
+  it("uses configured readers, and leaves calls alone when emit is off", () => {
+    const core = withFides({ readers: ["team-a"] });
+    core.invoke({ ...labelCall("get_file", "x", "s1"), context: { sessionId: "s1" } });
+    const params = (stamp(core, { sessionId: "s1" }).payload as { params: { _meta: Record<string, unknown> } }).params;
+    expect(params._meta[FIDES]).toEqual({ $: { integrity: "trusted", confidentiality: ["team-a"] } });
+    expect(stamp(make(), { sessionId: "s1" }).modified).toBe(false);
   });
 });

@@ -28,7 +28,7 @@ import {
 } from "./config.js";
 import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
-import { InterceptorInvoker } from "./invoker.js";
+import { InterceptorInvoker, checkOverrides, duplicateInterceptors, mutatorsAfter } from "./invoker.js";
 import { NtfyNotifier } from "./ntfy.js";
 import { RoleAuthorizer } from "./roles.js";
 
@@ -192,10 +192,21 @@ export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string): P
  * Under Claude Code, which passes `CLAUDE_CODE_SESSION_ID` to stdio MCP
  * servers, the gateway uses that id and keeps session labels in files, so the
  * Claude Code hooks (`adtl-gateway hook`) add to the same session label.
+ *
+ * `ADTL_SESSION_ID` does the same for any agent framework, and wins over
+ * Claude Code's: a sub-agent's gateway started with its parent's session id
+ * starts from the parent's label, and what it reads taints the parent too.
  */
 export function sharedSession(env: NodeJS.ProcessEnv): { sessionId: string; dir: string } | undefined {
-  const sessionId = env.CLAUDE_CODE_SESSION_ID?.trim();
+  const sessionId = env.ADTL_SESSION_ID?.trim() || env.CLAUDE_CODE_SESSION_ID?.trim();
   return sessionId ? { sessionId, dir: defaultSessionsDir(env) } : undefined;
+}
+
+/** `ADTL_AGENT_ID` (and `ADTL_AGENT_TYPE`): which agent this gateway serves, for the audit log. */
+export function gatewayAgent(env: NodeJS.ProcessEnv): { id: string; type?: string } | undefined {
+  const id = env.ADTL_AGENT_ID?.trim();
+  const type = env.ADTL_AGENT_TYPE?.trim();
+  return id ? { id, ...(type ? { type } : {}) } : undefined;
 }
 
 export interface StartedGateway {
@@ -237,15 +248,48 @@ export async function startGateway(
     if (!interceptors.getServerCapabilities()?.extensions?.[INTERCEPTORS_EXTENSION]) {
       throw new GatewayConfigError(`The interceptor server does not declare the ${INTERCEPTORS_EXTENSION} extension`);
     }
-    const bound = await InterceptorInvoker.discover(interceptors);
-    const names = bound.map((b) => b.definition.name);
+    const own = await InterceptorInvoker.discover(interceptors, { server: "interceptors" });
+    const ownNames = own.map((b) => b.definition.name);
     for (const required of [POLICY_INTERCEPTOR, LABEL_INTERCEPTOR]) {
-      if (!names.includes(required)) {
+      if (!ownNames.includes(required)) {
         throw new GatewayConfigError(`The interceptor server does not offer ${required}; refusing to start without it`);
       }
     }
+    // More interceptor servers (SEP-2624: interceptors may come from N servers, each invoked where it was advertised).
+    // A server that can't be reached stops startup: the owner asked for its interceptors.
+    const bound = [...own];
+    for (const [id, server] of Object.entries(loaded.gateway.interceptorServers)) {
+      const where = `gateway.interceptorServers.${id}`;
+      let client: Client;
+      try {
+        client = await connectUpstream(`interceptors:${id}`, expandUpstream(id, server, env), baseDir);
+      } catch (err) {
+        throw new GatewayConfigError(`${where}: could not connect: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      clients.push(client);
+      if (!client.getServerCapabilities()?.extensions?.[INTERCEPTORS_EXTENSION]) {
+        throw new GatewayConfigError(`${where} does not declare the ${INTERCEPTORS_EXTENSION} extension`);
+      }
+      bound.push(...(await InterceptorInvoker.discover(client, { server: id, sendConfig: false })));
+    }
+    const duplicates = duplicateInterceptors(bound);
+    if (duplicates.length) throw new GatewayConfigError(`Interceptor names must be unique across servers: ${duplicates.join("; ")}`);
+    const names = bound.map((b) => b.definition.name);
+    const overrides = loaded.gateway.interceptorOverrides;
+    const problems = checkOverrides(bound.map((b) => b.definition), overrides);
+    if (problems.length) throw new GatewayConfigError(`gateway.interceptorOverrides: ${problems.join("; ")}`);
+    const late = mutatorsAfter(bound, LABEL_INTERCEPTOR, overrides);
+    if (late.length) {
+      log.warn(`${late.join(", ")} run after ${LABEL_INTERCEPTOR} and could change or drop its label; give them a lower priorityHint`);
+    }
+    for (const name of [POLICY_INTERCEPTOR, LABEL_INTERCEPTOR]) {
+      const o = overrides[name];
+      if (o?.mode === "audit" || o?.failOpen === true || o?.hooks) {
+        log.warn(`gateway.interceptorOverrides relaxes ${name} (${Object.keys(o).join(", ")}): calls it would stop may get through`);
+      }
+    }
     const audit = loaded.gateway.mode === "audit";
-    const invoker = new InterceptorInvoker(bound, loaded.gateway.interceptorTimeoutMs, audit ? "audit" : undefined);
+    const invoker = new InterceptorInvoker(bound, loaded.gateway.interceptorTimeoutMs, audit ? "audit" : undefined, overrides);
     log.info(`interceptors: ${names.join(", ")}`);
     if (shared) log.info(`sharing session labels with Claude Code hooks (${shared.dir})`);
     if (audit) log.warn("audit mode: calls are logged but never stopped or changed");
@@ -280,8 +324,11 @@ export async function startGateway(
       if (!principal) log.warn('roles are set but gateway.principal is not: only roles with members ["*"] apply');
     }
     for (const a of authorizers) if (a.name !== "roles") log.info(`authorizer: ${a.name}`);
+    const agent = gatewayAgent(env);
+    if (agent) log.info(`agent: ${agent.id}${agent.type ? ` (${agent.type})` : ""}`);
     const gateway = new AdtlGateway({
       ...(shared ? { sessionId: shared.sessionId } : {}),
+      ...(agent ? { agent } : {}),
       upstreams,
       invoker,
       ...(auditLog ? { audit: auditLog } : {}),

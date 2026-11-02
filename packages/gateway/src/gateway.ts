@@ -62,7 +62,7 @@ import { authorize, type AuthorizationRequest, type Authorizer, type Denial, typ
 import { TOOL_SEPARATOR } from "./config.js";
 import type { Blocked, InterceptorInvoker, InterceptorRun, PhaseOutcome } from "./invoker.js";
 
-export const GATEWAY_VERSION = "0.7.0";
+export const GATEWAY_VERSION = "0.8.0";
 
 /** `_meta` key on gateway-generated error results describing why a call was stopped. */
 export const GATEWAY_DECISION_KEY = "adtl/gateway";
@@ -115,6 +115,8 @@ export interface AdtlGatewayOptions {
   approverRoles?: Map<string, string[]>;
   /** Also ask for approval in the MCP client, when it supports elicitation. */
   elicitApprovals?: boolean;
+  /** The (sub-)agent this gateway serves, recorded on every audit entry. */
+  agent?: { id: string; type?: string };
 }
 
 /**
@@ -174,6 +176,7 @@ export class AdtlGateway {
   private readonly approvals: ApprovalBroker | undefined;
   private readonly authorizers: Authorizer[];
   private readonly principal: Principal;
+  private readonly agent: { agent: { id: string; type?: string } } | Record<string, never>;
   private readonly approverRoles: Map<string, string[]>;
   private readonly elicitApprovals: boolean;
   /** The server the agent is connected to, for elicitation. */
@@ -193,6 +196,7 @@ export class AdtlGateway {
     this.approvals = opts.approvals;
     this.authorizers = opts.authorizer === undefined ? [] : [opts.authorizer].flat();
     this.principal = opts.principal ?? { type: "anonymous" };
+    this.agent = opts.agent ? { agent: opts.agent } : {};
     this.approverRoles = opts.approverRoles ?? new Map();
     this.elicitApprovals = opts.elicitApprovals === true;
   }
@@ -450,6 +454,7 @@ export class AdtlGateway {
       this.audit?.write({
         ts: context.timestamp!,
         sessionId: this.sessionId,
+        ...this.agent,
         event,
         server: upstream,
         ...target,
@@ -501,7 +506,7 @@ export class AdtlGateway {
     }
     const label = infoOf(res, "adtl.label");
     finish({ outcome: "forwarded", ...audit, label: label.label, ...(label.ledger ? { ledger: label.ledger } : {}),
-      ...(label.records ? { records: label.records } : {}), sessionLabel: label.sessionLabel, warnings });
+      ...(label.records ? { records: label.records } : {}), ...(label.recordIds ? { recordIds: label.recordIds } : {}), sessionLabel: label.sessionLabel, warnings });
     return (res.payload as { result: R }).result;
   }
 
@@ -525,7 +530,7 @@ export class AdtlGateway {
       server: route.upstream,
       ...(route.annotations ? { toolAnnotations: route.annotations } : {}),
     };
-    const base = { sessionId: this.sessionId, event: "tools/call" as const, server: route.upstream, tool: route.tool };
+    const base = { sessionId: this.sessionId, ...this.agent, event: "tools/call" as const, server: route.upstream, tool: route.tool };
     let denied: Denial | undefined;
     const ran: InterceptorRun[] = [];
     const finish = (entry: Omit<AuditEntry, keyof typeof base | "ts" | "durationMs">) =>
@@ -630,7 +635,9 @@ export class AdtlGateway {
     // 2. Forward to the upstream server.
     let result: CallToolResult;
     try {
-      result = (await client.callTool({ name: forwarded.name, arguments: forwarded.arguments })) as CallToolResult;
+      // A mutator may add request _meta (e.g. fides-gateway labels); pass it on.
+      const meta = (forwarded as { _meta?: Record<string, unknown> })._meta;
+      result = (await client.callTool({ name: forwarded.name, arguments: forwarded.arguments, ...(meta ? { _meta: meta } : {}) })) as CallToolResult;
     } catch (err) {
       const reason = (err as Error).message;
       finish({ outcome: "upstream_error", ...(decision ? { decision } : {}), ...approved, reason, callHash: policy.callHash, ...(audit ? { mode: "audit" as const } : {}), warnings: req.warnings });
@@ -663,6 +670,7 @@ export class AdtlGateway {
       label: label.label,
       ...(label.ledger ? { ledger: label.ledger } : {}),
       ...(label.records ? { records: label.records } : {}),
+      ...(label.recordIds ? { recordIds: label.recordIds } : {}),
       sessionLabel: label.sessionLabel,
       warnings: [...req.warnings, ...res.warnings],
     });

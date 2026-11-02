@@ -14,11 +14,17 @@
 // - search_memory returns every stored memory, one per line, with its metadata.
 // - get_memory returns one memory by id.
 // - update_memory changes a memory's text and lays the caller's metadata over
-//   the stored metadata, like Mem0's update().
+//   the stored metadata, like open-source Mem0's update(). With
+//   `updateMode: "replace"` it replaces the metadata instead, as Mem0's hosted
+//   docs describe update_memory ("Overwrite a memory's text and/or metadata").
+// - With `merge: true`, add_memory folds a stored memory into a new one whose
+//   text contains it, like the hosted platform's always-on Merge: the barer
+//   record is hidden from search_memory unless it is called with
+//   include_merged, and the new record keeps only the new writer's metadata.
 // - consolidate merges all memories into one record, as servers that
 //   deduplicate or summarize do. The merged record keeps no metadata.
 //
-// Run over stdio:  node examples/fake-memory/server.mjs
+// Run over stdio:  node examples/fake-memory/server.mjs [--update-replace] [--merge]
 
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -52,7 +58,7 @@ const scopeOf = (ids) => ["agent_id", "run_id", "user_id"].filter((k) => ids[k])
  * `memories` and `buffers` are shared storage, so several server instances
  * (one per session) see the same data.
  */
-export function createFakeMemoryServer({ memories = [], buffers = new Map() } = {}) {
+export function createFakeMemoryServer({ memories = [], buffers = new Map(), updateMode = "overlay", merge = false } = {}) {
   const server = new McpServer({ name: "fake-memory", version: "0.0.1" });
   const text = (t) => ({ content: [{ type: "text", text: t }] });
 
@@ -73,7 +79,10 @@ export function createFakeMemoryServer({ memories = [], buffers = new Map() } = 
       const scope = scopeOf(ids);
       const buffer = buffers.get(scope) ?? [];
       const added = infer ? extractFacts(resolveReferences(t, buffer)) : [t];
-      const stored = added.map((m) => ({ id: `m${memories.length + 1}`, text: m, ...(metadata ? { metadata: { ...metadata } } : {}) }));
+      const stored = added.map((m, i) => ({ id: `m${memories.length + i + 1}`, text: m, ...(metadata ? { metadata: { ...metadata } } : {}) }));
+      if (merge) {
+        for (const old of memories) if (!old.merged && stored.some((m) => m.text.includes(old.text))) old.merged = true;
+      }
       memories.push(...stored);
       buffers.set(scope, [...buffer, t].slice(-10));
       return {
@@ -102,18 +111,22 @@ export function createFakeMemoryServer({ memories = [], buffers = new Map() } = 
       const m = memories.find((x) => x.id === id);
       if (!m) return { ...text(`No memory ${id}`), isError: true };
       if (t !== undefined) m.text = t;
-      if (metadata) m.metadata = { ...(m.metadata ?? {}), ...metadata };
+      if (metadata) m.metadata = updateMode === "replace" ? { ...metadata } : { ...(m.metadata ?? {}), ...metadata };
       return text("Updated");
     },
   );
 
   server.registerTool(
     "search_memory",
-    { description: "Return what was remembered", inputSchema: { query: z.string() }, annotations: { readOnlyHint: true } },
-    async () => ({
-      content: [{ type: "text", text: memories.map((m) => m.text).join("\n") }],
-      structuredContent: { memories },
-    }),
+    {
+      description: "Return what was remembered",
+      inputSchema: { query: z.string(), include_merged: z.boolean().optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ include_merged = false }) => {
+      const shown = memories.filter((m) => include_merged || !m.merged);
+      return { content: [{ type: "text", text: shown.map((m) => m.text).join("\n") }], structuredContent: { memories: shown } };
+    },
   );
 
   server.registerTool("consolidate", { description: "Merge all memories into one" }, async () => {
@@ -126,5 +139,6 @@ export function createFakeMemoryServer({ memories = [], buffers = new Map() } = 
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  await createFakeMemoryServer().connect(new StdioServerTransport());
+  const updateMode = process.argv.includes("--update-replace") ? "replace" : "overlay";
+  await createFakeMemoryServer({ updateMode, merge: process.argv.includes("--merge") }).connect(new StdioServerTransport());
 }

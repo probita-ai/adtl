@@ -88,6 +88,19 @@ gateway:
     );
   });
 
+  it("parses per-interceptor overrides and rejects unknown fields", async () => {
+    const c = await loadGatewayConfig(
+      writeConfig(
+        'gateway: { upstreams: { a: { command: x } }, interceptorOverrides: { adtl.label: { timeoutMs: 10000, hooks: [{ events: ["tools/call"], phase: response }] } } }\n',
+      ),
+    );
+    expect(c.gateway.interceptorOverrides).toEqual({ "adtl.label": { timeoutMs: 10000, hooks: [{ events: ["tools/call"], phase: "response" }] } });
+    expect((await loadGatewayConfig(writeConfig("gateway: { upstreams: { a: { command: x } } }\n"))).gateway.interceptorOverrides).toEqual({});
+    await expect(
+      loadGatewayConfig(writeConfig("gateway: { upstreams: { a: { command: x } }, interceptorOverrides: { adtl.label: { retries: 2 } } }\n")),
+    ).rejects.toThrow(/interceptorOverrides/);
+  });
+
   it("requires a gateway section with at least one upstream", async () => {
     await expect(loadGatewayConfig(writeConfig("servers: {}\n"))).rejects.toThrow(/missing "gateway:" section/);
     await expect(loadGatewayConfig(writeConfig("gateway: { upstreams: {} }\n"))).rejects.toThrow(/At least one upstream/);

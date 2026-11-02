@@ -12,6 +12,10 @@
  *       docs:
  *         url: https://example.com/mcp
  *         headers: { Authorization: "Bearer ${DOCS_TOKEN}" }
+ *     interceptorServers:                # optional: more interceptor servers, run beside ADTL's
+ *       pii: { url: https://pii.example.com/mcp }
+ *     interceptorOverrides:              # optional: per-interceptor execution policy (SEP-2624)
+ *       adtl.label: { timeoutMs: 10000 }
  *     principal: { id: "${USER}" }       # optional: who runs this gateway (default: anonymous)
  *     roles:                             # optional: who may use which tools (deny by default)
  *       maintainers: { members: [alice], tools: ["github.*"] }
@@ -162,6 +166,24 @@ export const CedarConfigSchema = z
   .strict();
 export type CedarConfig = z.infer<typeof CedarConfigSchema>;
 
+const PhaseSchema = z.enum(["request", "response"]);
+
+/** SEP-2624 InterceptorOverrides, set by the gateway owner for one interceptor. */
+export const InterceptorOverridesSchema = z
+  .object({
+    failOpen: z.boolean().optional(),
+    priorityHint: z
+      .union([z.number().int(), z.object({ request: z.number().int().optional(), response: z.number().int().optional() }).strict()])
+      .optional(),
+    mode: z.enum(["active", "audit"]).optional(),
+    timeoutMs: z.number().int().positive().max(600_000).optional(),
+    hooks: z
+      .array(z.object({ events: z.array(z.string().min(1)).min(1), phase: PhaseSchema }).strict())
+      .min(1, "hooks: list at least one hook, or leave it out to keep the declared hooks")
+      .optional(),
+  })
+  .strict();
+
 export const GatewayConfigSchema = z
   .object({
     upstreams: z
@@ -172,6 +194,13 @@ export const GatewayConfigSchema = z
       }),
     /** How to start the interceptor server. Default: the bundled adtl-interceptors with this same config file. */
     interceptors: StdioUpstreamSchema.optional(),
+    /** More interceptor servers (stdio or Streamable HTTP) whose interceptors run beside ADTL's. */
+    interceptorServers: z
+      .record(UpstreamSchema)
+      .refine((u) => Object.keys(u).every((id) => UPSTREAM_ID.test(id)), {
+        message: "Interceptor server ids may only contain letters, digits and '-'",
+      })
+      .default({}),
     /** Path of a JSONL audit log. Relative paths are resolved against the config file's directory. */
     audit: z.string().min(1).optional(),
     /**
@@ -183,6 +212,8 @@ export const GatewayConfigSchema = z
     approvals: ApprovalsConfigSchema.optional(),
     /** Timeout for each interceptor invocation, in milliseconds. */
     interceptorTimeoutMs: z.number().int().positive().default(5000),
+    /** Per-interceptor overrides of failOpen, priorityHint, mode, timeoutMs and hooks, by interceptor name. */
+    interceptorOverrides: z.record(InterceptorOverridesSchema).default({}),
     /** Who runs this gateway. Passed to the authorizer and the interceptors. Default: anonymous. */
     principal: PrincipalConfigSchema.optional(),
     /** Role-based authorization: when present, a call no role grants is denied. */

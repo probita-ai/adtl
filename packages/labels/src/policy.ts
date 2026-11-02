@@ -15,6 +15,9 @@ export interface PolicyInput {
   server: string;
   tool: string;
   egress: Egress;
+  /** From the tool's action-metadata, if it declares one. */
+  outcome?: string;
+  requiresReview?: boolean;
 }
 
 export interface PolicyDecision {
@@ -50,6 +53,9 @@ export function ruleMatches(rule: PolicyRule, input: PolicyInput): boolean {
   if (conf && !conf.includes(input.session.confidentiality)) return false;
   const egress = asArray(w["tool.egress"]);
   if (egress && !egress.includes(input.egress)) return false;
+  const outcome = asArray(w["tool.outcome"]);
+  if (outcome && (input.outcome === undefined || !outcome.includes(input.outcome))) return false;
+  if (w["tool.requiresReview"] !== undefined && w["tool.requiresReview"] !== (input.requiresReview === true)) return false;
   const tools = asArray(w.tool);
   if (tools) {
     const qualified = `${input.server}.${input.tool}`;
@@ -58,7 +64,18 @@ export function ruleMatches(rule: PolicyRule, input: PolicyInput): boolean {
   return true;
 }
 
+/** The rule name reported when `honorRequiresReview` turns an allow into an ask. */
+export const REQUIRES_REVIEW_RULE = "tool.requiresReview";
+
 export function evaluatePolicy(policy: Policy, input: PolicyInput): PolicyDecision {
+  const d = evaluateRules(policy, input);
+  if (d.decision === "allow" && input.requiresReview === true && policy.honorRequiresReview !== false) {
+    return { decision: "ask", matched: [REQUIRES_REVIEW_RULE], reason: `${input.server}.${input.tool} says it requires review before it runs` };
+  }
+  return d;
+}
+
+function evaluateRules(policy: Policy, input: PolicyInput): PolicyDecision {
   const matching = policy.rules.filter((r) => ruleMatches(r, input));
   if (matching.length === 0) {
     return { decision: policy.default, matched: [], reason: `No rule matched; default is ${policy.default}` };

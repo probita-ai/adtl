@@ -33,7 +33,7 @@ export interface AuditEntry {
   outcome: "forwarded" | "blocked" | "asked" | "upstream_error";
   /** Present when the entry was written by the Claude Code hook rather than the gateway. */
   via?: "claude-code-hook";
-  /** Present when a Claude Code subagent made the call: its id and type (e.g. "Explore"). */
+  /** Present when a sub-agent made the call: its id and type (e.g. "Explore"), from Claude Code or `ADTL_AGENT_ID`. */
   agent?: { id: string; type?: string };
   /** The policy's decision. In audit mode a call can be forwarded with decision "ask" or "block". */
   decision?: string;
@@ -51,6 +51,8 @@ export interface AuditEntry {
   ledger?: unknown;
   /** Present when the result carried record label stamps: how many, and which sessions wrote them. */
   records?: unknown;
+  /** Present when the ledger knew record ids in the result (tool rule `recordIds`): how many, and which sessions wrote them. */
+  recordIds?: unknown;
   sessionLabel?: unknown;
   /** Every interceptor invocation for this call, with its resolved mode and failOpen and where each came from (SEP-2624). */
   interceptors?: InterceptorRun[];

@@ -50,9 +50,14 @@ import {
   evaluatePolicy,
   labelResult,
   readRecordLabels,
+  recordIds,
+  recordIdKeys,
   scopeRecord,
   stampRecordLabel,
   toolEgress,
+  readActionMetadata,
+  FIDES_LABELS_KEY,
+  fidesLabels,
   type AdtlConfig,
   type Decision,
   type Label,
@@ -75,7 +80,7 @@ export const POLICY_INTERCEPTOR = "adtl.policy";
 /** Key in `ValidationResult.info` carrying ADTL's decision, for invokers that predate `confirmation`. */
 export const DECISION_INFO_KEY = "adtl/decision";
 
-export const VERSION = "0.7.0";
+export const VERSION = "0.8.0";
 
 /** JSON-RPC error codes used for invocation errors. */
 export const ErrorCodes = {
@@ -256,12 +261,17 @@ export class AdtlInterceptors {
     const rule = tool === undefined ? undefined : this.config.servers[config.server]?.tools[tool];
     const field = rule?.labelInto;
     const scopeField = rule?.scopeInto;
+    const fides = this.config.fides.emit;
     const unchanged: MutationResult = { interceptor: LABEL_INTERCEPTOR, type: "mutation", phase: params.phase, modified: false, payload: params.payload };
-    if (field === undefined && scopeField === undefined) return unchanged;
+    if (field === undefined && scopeField === undefined && !fides) return unchanged;
 
     const sessionId = params.context?.sessionId;
     if (!sessionId) return { ...unchanged, info: { warning: "No context.sessionId: the record was not stamped or scoped" } };
     const label = this.sessions.get(sessionId);
+    // fides-gateway reads the caller's label from the request's _meta: "$" covers the name and every argument.
+    const meta = fides
+      ? { _meta: { ...(isRecord(rpcParams._meta) ? rpcParams._meta : {}), [FIDES_LABELS_KEY]: fidesLabels(label, this.fidesReaders(params)) } }
+      : {};
     let args = isRecord(rpcParams.arguments) ? rpcParams.arguments : {};
     try {
       if (field !== undefined) args = stampRecordLabel(args, field, label, sessionId);
@@ -269,8 +279,8 @@ export class AdtlInterceptors {
     } catch (err) {
       throw new InterceptorError(ErrorCodes.InvalidParams, `${LABEL_INTERCEPTOR}: ${(err as Error).message}`, { interceptor: LABEL_INTERCEPTOR });
     }
-    if (args === rpcParams.arguments) return unchanged;
-    const next = { ...rpcParams, arguments: args };
+    if (args === rpcParams.arguments && !fides) return unchanged;
+    const next = { ...rpcParams, arguments: args, ...meta };
     return {
       ...unchanged,
       modified: true,
@@ -278,8 +288,16 @@ export class AdtlInterceptors {
       info: {
         ...(field !== undefined ? { stamped: field } : {}),
         ...(scopeField !== undefined && args[scopeField] !== undefined ? { scope: args[scopeField] } : {}),
+        ...(fides ? { fides: true } : {}),
       },
     };
+  }
+
+  /** fides-gateway readers for private data: the config's, else the principal running the gateway, else nobody. */
+  private fidesReaders(params: InvocationParams): string[] {
+    if (this.config.fides.readers) return this.config.fides.readers;
+    const p = params.context?.principal;
+    return p && p.type !== "anonymous" && p.id ? [p.id] : [];
   }
 
   private label(params: InvocationParams, config: InvocationConfig): MutationResult {
@@ -335,11 +353,19 @@ export class AdtlInterceptors {
         info.records = { stamps: carried.records, writers: carried.writers };
       }
     }
+    // Record ids the ledger knows: labels that survive servers that replace or drop stamps.
+    const idField = tool !== undefined ? (server?.tools[tool]?.recordIds ?? server?.defaults?.recordIds) : undefined;
+    const ids = this.ledger && idField ? recordIds(result, idField) : [];
     if (this.ledger) {
       const match = this.ledger.lookup(valueHashes(result));
       if (match) {
         label = join(label, match.label);
         info.ledger = { chunks: match.chunks, writers: match.writers };
+      }
+      const byId = ids.length ? this.ledger.lookup(recordIdKeys(config.server, ids)) : undefined;
+      if (byId) {
+        label = join(label, byId.label);
+        info.recordIds = { matched: byId.chunks, writers: byId.writers };
       }
     }
     info.label = label;
@@ -353,12 +379,18 @@ export class AdtlInterceptors {
         const source = { server: config.server, ...(tool !== undefined ? { tool } : {}), ...(prompt !== undefined ? { prompt } : {}) };
         this.ledger.record(valueHashes(sent), before, sessionId, source);
       }
+      // A write tool's records (ids it was given, and ids it returned) carry what the session had seen.
+      if (this.ledger && idField && (server?.tools[tool!]?.labelInto ?? server?.defaults?.labelInto) !== undefined) {
+        const written = [...new Set([...recordIds(sent ?? {}, idField), ...ids])];
+        const source = { server: config.server, ...(tool !== undefined ? { tool } : {}) };
+        if (written.length) this.ledger.record(recordIdKeys(config.server, written), before, sessionId, source);
+      }
       info.sessionLabel = this.sessions.observe(sessionId, label);
     } else {
       info.warning = "No context.sessionId: the result was labeled but not recorded in any session";
     }
 
-    const labeled = attachLabel(result, label);
+    const labeled = attachLabel(result, label, this.config.fides.emit ? { fides: { readers: this.fidesReaders(params) } } : {});
     return {
       interceptor: LABEL_INTERCEPTOR,
       type: "mutation",
@@ -395,11 +427,14 @@ export class AdtlInterceptors {
     }
 
     const session = this.sessions.get(sessionId);
+    const meta = readActionMetadata(config.toolAnnotations);
     const d = evaluatePolicy(this.config.policy, {
       session,
       server: config.server,
       tool,
-      egress: toolEgress(this.config, config.server, tool),
+      egress: toolEgress(this.config, config.server, tool, config.toolAnnotations),
+      ...(meta.outcome !== undefined ? { outcome: meta.outcome } : {}),
+      ...(meta.requiresReview !== undefined ? { requiresReview: meta.requiresReview } : {}),
     });
     if (d.decision !== "ask") return this.decision(params, d.decision, d.reason, d.matched, hash, session);
 

@@ -16,6 +16,7 @@
  * - Unknown `evidenceRef.type` values must be safely ignorable.
  */
 import { digest } from "./canonical.js";
+import { FIDES_LABELS_KEY, fidesLabels } from "./fides.js";
 import type { Label } from "./label.js";
 
 export const TRUST_ANNOTATIONS_KEY = "io.modelcontextprotocol/trust-annotations";
@@ -72,7 +73,7 @@ function readAnnotations(meta: unknown): TrustClaims {
 }
 
 /** Combine two claims with union semantics: once true, stays true. */
-function unionClaims(a: TrustClaims, b: TrustClaims): TrustClaims {
+export function unionClaims(a: TrustClaims, b: TrustClaims): TrustClaims {
   const out: TrustClaims = {};
   for (const k of ["untrusted", "sensitive"] as const) {
     if (a[k] === true || b[k] === true) out[k] = true;
@@ -119,17 +120,24 @@ export function labelToAnnotations(label: Label): TrustAnnotations {
   };
 }
 
+export interface AttachOptions {
+  /** Also attach the label in fides-gateway's form, with these readers for private data. */
+  fides?: { readers: readonly string[] };
+}
+
 /**
  * Return a copy of `result` with the label attached under both the draft
- * trust-annotations key and ADTL's own key. Other `_meta` entries are kept.
+ * trust-annotations key and ADTL's own key (and fides-gateway's, if asked).
+ * Other `_meta` entries are kept.
  */
-export function attachLabel<T extends ResultLike>(result: T, label: Label): T & { _meta: Meta } {
+export function attachLabel<T extends ResultLike>(result: T, label: Label, opts: AttachOptions = {}): T & { _meta: Meta } {
   return {
     ...result,
     _meta: {
       ...(result._meta ?? {}),
       [TRUST_ANNOTATIONS_KEY]: labelToAnnotations(label),
       [ADTL_LABEL_KEY]: label,
+      ...(opts.fides ? { [FIDES_LABELS_KEY]: fidesLabels(label, opts.fides.readers) } : {}),
     },
   };
 }

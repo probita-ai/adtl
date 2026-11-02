@@ -83,15 +83,16 @@ v0.4 adds the label ledger: content written by a session that had read untrusted
 
 v0.5 carries labels through memory servers that rewrite what they store ([labels on records](packages/gateway#labels-on-records)), makes the audit log tamper-evident (`adtl-gateway audit verify`), requires a reason to declassify, follows the [confirmation proposal](https://github.com/modelcontextprotocol/experimental-ext-interceptors/pull/45) for SEP-2624 "ask" decisions, and adds an [`Authorizer`](packages/gateway#authorization) interface: who may use a tool at all, checked before the policy.
 
-v0.5.1 keeps record labels through Mem0-style memory servers: `scopeInto` keeps a tainted session's messages out of clean sessions' reference resolution, and each session stamps records under its own key, so an update can't replace a stricter stamp.
+v0.5.1 keeps record labels through Mem0-style memory servers: `scopeInto` keeps a tainted session's messages out of clean sessions' reference resolution, and each session stamps records under its own key, so an update can't replace a stricter stamp on servers that merge an update's metadata into the stored metadata.
 
 v0.6 adds authorization and stronger evidence. Roles in `adtl.yaml` say who may use which tools (and hide the rest from the agent), and policy rules can name who may approve an "ask", each approver on their own channel. Approvals can also come from inside MCP clients that support elicitation. Session receipts, ledger entries and declassifications are signed with a per-machine Ed25519 key, `init` has presets for Slack and Gmail, and `npx -y @adtl/gateway playground` opens a local web UI to try it all against fake servers.
 
 v0.7 runs the exfiltration attack against [GitHub's real MCP server](examples/github-real-demo), labeled by the `github` preset, and adds [Cedar policies](packages/gateway#cedar-policies) for authorization rules roles can't express, such as working hours or tool arguments.
 
+v0.8 carries labels across hops: sub-agents share their parent's label (`SubagentStart` hook in Claude Code, `ADTL_SESSION_ID` elsewhere), a [draft A2A extension](docs/a2a-trust-labels-v1.md) signs labels onto agent-to-agent messages, and labels map to and from [FIDES](packages/gateway#fides-and-fides-gateway) and fides-gateway. It also follows the latest drafts: [per-interceptor overrides](packages/gateway#interceptor-overrides) and [more interceptor servers](packages/gateway#more-interceptor-servers) from SEP-2624, and tools that describe themselves with [action-metadata](packages/gateway#tools-that-describe-themselves-action-metadata). Record labels survive memory servers whose updates replace metadata (`recordIds`).
+
 Planned next:
 
-- **v0.8:** labels carried across sub-agents and A2A, and interop with FIDES
 - **Later:** an OpenFGA adapter for relationship-based authorization
 
 Help is very welcome: see the [open issues](https://github.com/probita-ai/adtl/issues), especially the ones marked [help wanted](https://github.com/probita-ai/adtl/labels/help%20wanted).

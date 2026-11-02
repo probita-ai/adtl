@@ -75,6 +75,20 @@ One file holds both the labels and the gateway settings.
 
 Tools without a rule use the defaults (`untrusted`, `private`, egress `unknown`). That's safe but strict, so describe the tools you use. Resources and prompts use the server's `defaults`.
 
+#### Tools that describe themselves: action-metadata
+
+Some servers annotate their tools with the Tool Annotations IG's draft [`action-metadata`](https://github.com/modelcontextprotocol/experimental-ext-tool-annotations/blob/main/specification/draft/action-metadata.mdx) extension (`annotations["io.modelcontextprotocol/action-metadata"]`). The gateway reads it as the server's own claim:
+
+| Field | Used as | From any server | Only with `acceptServerClaims: true` |
+|---|---|---|---|
+| `returnMetadata.source` | result integrity | `open-world` makes it `untrusted` | `first-party` makes it `trusted` |
+| `returnMetadata.sensitivity` | result confidentiality | anything but `public` makes it at least `private` (`credentials` / `secret`: `secret`) | `public` |
+| `inputMetadata.destination` | egress | `external` / `public`, or anything stricter than your rule | `local` / `internal` (as `internal`), `none` |
+| `outcome` | policy condition `tool.outcome` | yes | |
+| `requiresReview` | `ask` before the call | yes | |
+
+Your rules still come first: a claim can make them stricter, never looser. Unknown values are ignored. The extension is a draft, so its values may change.
+
 #### Drafting rules with `init`
 
 List your servers under `gateway.upstreams`, then let `init` draft a rule for every tool:
@@ -87,7 +101,7 @@ adtl-gateway init -c adtl.yaml --write   # update the file (original kept as adt
 `init` connects to each upstream and lists its tools.
 
 - **Presets** cover the GitHub (`github-mcp-server`), filesystem and fetch servers, Slack (`@modelcontextprotocol/server-slack` and `slack-mcp-server`) and Gmail (`@gongrzhe/server-gmail-autoauth-mcp`). A preset says what the server's reads and writes mean; the server's `readOnlyHint` decides which tools are reads, so new tools are covered too. For servers without hints, the preset lists their tools by name. Slack messages and email are untrusted and private; posting to Slack is external egress, and so are sending email and Gmail filters, which can forward mail.
-- **Other servers** get rules from their MCP tool hints. Hints only set egress, because they are the server's own claims: every result stays `untrusted` and `private` until you change it. These lines are marked `review`.
+- **Other servers** get rules from their action-metadata destination if they declare one, else their MCP tool hints. Either only sets egress, because they are the server's own claims: every result stays `untrusted` and `private` until you change it. These lines are marked `review`.
 - Entries already in the file are never changed, so you can re-run `init` after a server adds tools. Tools the server no longer offers are reported, not removed.
 - Edits keep your comments, but the YAML may be reformatted slightly (e.g. `[a]` becomes `[ a ]`).
 
@@ -114,7 +128,7 @@ Labels only get stricter as a session goes on. A session that has read anything 
 
 ### Policy
 
-Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and `tool` (`server.tool` globs such as `github.*`), and decide `allow`, `ask` or `block`. When several rules match, the most restrictive decision wins. `ask` waits for a human when [approvals](#approvals) are configured, and blocks otherwise.
+Rules match on `session.integrity`, `session.confidentiality`, `tool.egress`, `tool` (`server.tool` globs such as `github.*`), and, for tools that declare [action-metadata](#tools-that-describe-themselves-action-metadata), `tool.outcome` (`benign`, `consequential`, `irreversible`) and `tool.requiresReview`. They decide `allow`, `ask` or `block`. When several rules match, the most restrictive decision wins. A tool that says `requiresReview: true` gets `ask` when no rule blocks it; set `policy.honorRequiresReview: false` to turn that off. `ask` waits for a human when [approvals](#approvals) are configured, and blocks otherwise.
 
 ### Gateway
 
@@ -125,14 +139,47 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 | `gateway.mode` | `active` (default) or `audit`. See [Trying a policy safely](#trying-a-policy-safely). |
 | `gateway.approvals` | Ask a human about `ask` decisions. See [Approvals](#approvals). |
 | `gateway.interceptorTimeoutMs` | Timeout per interceptor call (default 5000) |
+| `gateway.interceptorOverrides.<name>` | Execution policy for one interceptor, overriding what it declares: `failOpen`, `priorityHint`, `mode`, `timeoutMs`, and `hooks` (may only narrow the declared hooks). See [Interceptor overrides](#interceptor-overrides). |
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
+| `gateway.interceptorServers.<id>` | More interceptor servers, stdio or Streamable HTTP, whose interceptors run beside ADTL's. See [More interceptor servers](#more-interceptor-servers). |
 | `gateway.principal` | Who runs this gateway: `{ id, type?, claims? }`. `${VAR}` works in `id`. Default: anonymous. See [Authorization](#authorization). |
 | `gateway.roles` | Who may use which tools, prompts and resources. Deny by default once present. See [Authorization](#authorization). |
 | `gateway.cedar` | Cedar policies for attribute-based rules: `{ policies, entities?, timeZone? }`. See [Cedar policies](#cedar-policies). |
 
+#### More interceptor servers
+
+SEP-2624 interceptors can come from several servers. Add other people's interceptors (PII redaction, logging, your own checks) next to ADTL's:
+
+```yaml
+gateway:
+  interceptorServers:
+    pii: { command: npx, args: ["-y", "some-pii-interceptor"] }   # local, over stdio
+    audit: { url: https://audit.example.com/mcp, headers: { Authorization: "Bearer ${AUDIT_TOKEN}" } }
+```
+
+- Each interceptor is invoked on the server that advertised it, in the usual order: mutators by priority then name, validators in parallel.
+- They get the call's payload and context, but not ADTL's per-call `config` (server, tool, annotations), so their own defaults apply.
+- The gateway refuses to start if a server can't be reached, doesn't declare the interceptors extension, or offers an interceptor whose name another server already uses.
+- `adtl.label` runs late (priority 1000) so its label describes the final content. A mutator that would run after it gets a warning at startup, since it could change or drop the label; give it a lower `priorityHint` with an [override](#interceptor-overrides).
+
+#### Interceptor overrides
+
+SEP-2624 lets the gateway owner change how each interceptor runs without changing the interceptor server. Key them by interceptor name:
+
+```yaml
+gateway:
+  interceptorOverrides:
+    adtl.label: { timeoutMs: 10000 }          # a slow ledger on a network drive
+    pii.redact:                                 # a third-party interceptor
+      priorityHint: -50000
+      hooks: [{ events: ["tools/call"], phase: response }]
+```
+
+The gateway refuses to start if an override names an interceptor the server doesn't offer, or lists hooks the interceptor doesn't declare: hooks can only be narrowed. `gateway.mode: audit` (or `--audit`) still wins over a per-interceptor `mode`. Overrides that relax `adtl.policy` or `adtl.label` (`mode: audit`, `failOpen: true`, or narrowed `hooks`) are allowed, with a warning at startup.
+
 #### Checking the audit log
 
-Each entry lists the interceptors that ran for the call, with the execution policy each ran under, as SEP-2624 asks: `interceptors: [{ name, phase, mode, modeFrom, failOpen, failOpenFrom, failed? }]`, where `*From` is `override` (set by the gateway, e.g. `--audit`) or `default` (declared by the interceptor).
+Each entry lists the interceptors that ran for the call, with the execution policy each ran under, as SEP-2624 asks: `interceptors: [{ name, phase, mode, modeFrom, failOpen, failOpenFrom, timeoutMs, failed? }]`, where `*From` is `override` (set by the gateway: `--audit` or `interceptorOverrides`) or `default` (declared by the interceptor).
 
 Each line carries `prev`, the hash of the line before, and `hash`, over the line itself. Check the chain with:
 
@@ -252,7 +299,8 @@ The gateway only sees MCP calls. Claude Code's own tools (`WebFetch`, `WebSearch
   "hooks": {
     "PreToolUse":         [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10, "onFailure": "block" }] }],
     "PostToolUse":        [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }],
-    "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }]
+    "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }],
+    "SubagentStart":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "npx -y @adtl/gateway hook --config /absolute/path/to/adtl.yaml", "timeout": 10 }] }]
   }
 }
 ```
@@ -266,7 +314,7 @@ What it does:
 - **It shares one session label with the gateway.** Claude Code gives the gateway its session id (`CLAUDE_CODE_SESSION_ID`), and both keep the label in `~/.adtl/sessions/<id>.jsonl` (set `ADTL_SESSIONS_DIR` to change the directory). A `WebFetch` taints the session for `github__add_comment`, and a private file read through the gateway counts against a later `Bash` call. Labels last for the whole Claude Code session, including `--resume`.
 - **It covers MCP servers that skip the gateway**, such as connectors added in claude.ai. Their tools are labeled as their server name (`mcp__<server>__<tool>` → server `<server>`), so you can describe them under `servers:` like any upstream. The gateway's own tools (`mcp__adtl__*`) are skipped; pass `--gateway-server <name>` if you registered the gateway under another name.
 - **It fails closed.** If the hook can't decide, it exits with code 2, which stops the call.
-- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. Calls made inside a subagent (the Task tool) carry `"agent": { id, type }`. Their labels count toward the session id Claude Code gives the hook; if that is the parent's id, as the hook docs suggest, a subagent that reads untrusted content taints the parent too. The config needs no `gateway:` section if you only use the hooks.
+- **It writes to the same audit log** (`gateway.audit`) with `"via": "claude-code-hook"`, and follows `gateway.mode: audit`. Calls made inside a sub-agent carry `"agent": { id, type }`; see [Sub-agents](#sub-agents). The config needs no `gateway:` section if you only use the hooks.
 
 Built-in labels, which you can override under `servers.claude-code.tools`:
 
@@ -282,6 +330,20 @@ Built-in labels, which you can override under `servers.claude-code.tools`:
 With the [example policy](../../examples/adtl.yaml), `Bash` and `WebFetch` run freely in a fresh session, but ask first once the session has read untrusted content, because `no-public-write-after-untrusted` matches `tool.egress: [public, external, unknown]`.
 
 The hook also refuses `Write` and `Edit` on your ADTL config and session files, and asks before shell commands that mention the session directory, so the agent can't simply clear its own taint. This is a speed bump, not a sandbox.
+
+### Sub-agents
+
+A sub-agent starts from its parent's label, and what it reads taints the parent: the two share one session label. A sub-agent's answer mixes everything it saw, so sharing is the only safe default.
+
+- **Claude Code.** MCP calls from sub-agents go through the same gateway, so they share its session anyway. For built-in tools, the `SubagentStart` hook (in the snippet above) records which session each sub-agent was started in. Its later hook calls then use the parent's label even if Claude Code reports a session id of its own for them; Claude Code's docs suggest it reports the parent's. Audit entries name the sub-agent: `"agent": { "id": "…", "type": "Explore" }`.
+- **Other frameworks.** Start each sub-agent's gateway with its parent's session id and its own agent id:
+
+  ```sh
+  ADTL_SESSION_ID=<parent session> ADTL_AGENT_ID=researcher-1 ADTL_AGENT_TYPE=researcher \
+    npx -y @adtl/gateway --config adtl.yaml
+  ```
+
+  `ADTL_SESSION_ID` keeps the label in the shared session files (`ADTL_SESSIONS_DIR`, default `~/.adtl/sessions`), like `CLAUDE_CODE_SESSION_ID` does, and wins over it. `ADTL_AGENT_ID` and `ADTL_AGENT_TYPE` go on every audit entry.
 
 ## Label ledger
 
@@ -322,16 +384,35 @@ Some memory servers extract facts with a model on write, or merge records, so wh
 servers:
   memory:
     tools:
-      add_memory:    { egress: internal, labelInto: metadata, scopeInto: run_id }
-      update_memory: { egress: internal, labelInto: metadata }
-      search_memory: { integrity: trusted, confidentiality: public, egress: none, readLabels: true }
+      add_memory:    { egress: internal, labelInto: metadata, scopeInto: run_id, recordIds: id }
+      update_memory: { egress: internal, labelInto: metadata, recordIds: id }
+      search_memory: { integrity: trusted, confidentiality: public, egress: none, readLabels: true, recordIds: id }
 ```
 
 - **Write.** On every `add_memory` and `update_memory` call the gateway sets `metadata["adtl/record-label/<session>"]` to `{ integrity, confidentiality, writer }` from the session, and drops any stamp keys the agent put there. Each session stamps under its own key, so on a server that lays an update's metadata over the stored metadata (as Mem0 does), a clean session's update adds a stamp instead of replacing a tainted one.
 - **Read.** On `search_memory`, stamps anywhere in the result (also inside JSON text) are joined into its label, with the origin `adtl-record` / `session:<id>`, and the audit entry gets `records: { stamps, writers }`. Anyone who can write to the store can write a stamp, so stamps only make a label stricter. A malformed stamp counts as the global defaults.
 - **Scope.** Some servers also keep recent raw messages per scope, without metadata, and resolve references in a new message from them: Mem0 keeps the last 10 per `user_id`/`agent_id`/`run_id` and asks its extractor to resolve pronouns from them. A clean session writing under a tainted session's ids could then store a fact built from the tainted text, with a clean stamp. With `scopeInto: run_id`, a tainted session's writes get a run id named after its label (`<run_id>:adtl-untrusted-public`, or just `adtl-untrusted-public`), so the server keeps its messages apart. Clean sessions keep their ids, minus any label mark the agent added, so they can't join a tainted scope. Mem0 filters searches by the ids a call sets: a read that names the agent's own `run_id` doesn't see the tainted session's records, and one by `user_id` alone sees them all, with their stamps.
 - **Tools that return text without metadata** can't carry the label, and the ledger can't recognize extracted text. Give them a strict rule, such as `integrity: untrusted`. In Mem0 that is `history()`, and on Mem0's hosted MCP server `list_events` and `get_event_status`.
-- **Servers that drop or replace metadata** (when they consolidate records, or an update overwrites the metadata instead of merging it) can't carry the label either. Give their read tools a strict rule.
+- **Record ids.** With `recordIds: id` (and the ledger on), the gateway also remembers a tainted session's writes by record id: the ids a write tool is given (`update_memory`'s `id`) and returns (`add_memory`'s `ids`). Reads join the label back for any id they return, and the audit entry gets `recordIds: { matched, writers }`. This keeps the label when a server's update replaces the metadata instead of merging it, which [Mem0's hosted docs](https://github.com/probita-ai/adtl/issues/48) describe for `update_memory`.
+- **Merges.** A server that folds records together (Mem0's hosted Merge) keeps the label when the merged text still holds the tainted text as a whole line or paragraph (the ledger recognizes it), and the hidden, merged-away record keeps it by id. A merge that rewords the text loses it: if your account runs Merge, give the read tools a strict rule.
+- **Servers that drop or replace metadata** without returning record ids (when they consolidate records into new ones, for example) can't carry the label either. Give their read tools a strict rule.
+
+## FIDES and fides-gateway
+
+ADTL's labels map onto [FIDES](https://arxiv.org/abs/2505.23643), the information-flow model behind Microsoft's [fides-gateway](https://github.com/microsoft/fides-gateway), so the two can sit in one chain.
+
+- **Reading** is always on. Results that carry fides-gateway labels (`_meta["com.github.ifc/labels"]`, JSONPath → `{ integrity, confidentiality: [readers] }`) count as the server's own claims, like trust-annotations: they can make a label stricter, and relax it only with `acceptServerClaims: true`. Any reader list without `"public"` means `private`, and the strictest path wins.
+- **Writing** is opt-in:
+
+  ```yaml
+  fides:
+    emit: true
+    readers: [alice@example.com]   # optional: who may read private data; default: gateway.principal.id, else nobody
+  ```
+
+  Results then also carry the label in fides-gateway's form, and every outgoing tool call carries the session's label in its `_meta` (one `"$"` entry, which covers the name and every argument), so a fides-gateway behind ADTL can enforce on it.
+
+FIDES has two integrity levels, so `unknown` becomes `untrusted`. It has reader sets instead of levels, so `private` and `secret` both become the configured readers. To check the mapping against fides-gateway's own code, see [examples/fides-interop](../../examples/fides-interop).
 
 ## How it works
 
