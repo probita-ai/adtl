@@ -128,9 +128,9 @@ describe("adtl-gateway", () => {
     const { call, audit } = await setup();
     await call("github__list_repos", {});
     expect(audit.entries[0]?.interceptors).toEqual([
-      { name: "adtl.label", phase: "request", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default" },
-      { name: "adtl.policy", phase: "request", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default" },
-      { name: "adtl.label", phase: "response", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default" },
+      { name: "adtl.label", phase: "request", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default", timeoutMs: 5000 },
+      { name: "adtl.policy", phase: "request", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default", timeoutMs: 5000 },
+      { name: "adtl.label", phase: "response", mode: "active", modeFrom: "default", failOpen: false, failOpenFrom: "default", timeoutMs: 5000 },
     ]);
     const audited = await setup({ mode: "audit" });
     await audited.call("github__list_repos", {});

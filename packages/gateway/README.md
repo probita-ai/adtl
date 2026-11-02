@@ -125,14 +125,30 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and
 | `gateway.mode` | `active` (default) or `audit`. See [Trying a policy safely](#trying-a-policy-safely). |
 | `gateway.approvals` | Ask a human about `ask` decisions. See [Approvals](#approvals). |
 | `gateway.interceptorTimeoutMs` | Timeout per interceptor call (default 5000) |
+| `gateway.interceptorOverrides.<name>` | Execution policy for one interceptor, overriding what it declares: `failOpen`, `priorityHint`, `mode`, `timeoutMs`, and `hooks` (may only narrow the declared hooks). See [Interceptor overrides](#interceptor-overrides). |
 | `gateway.interceptors` | Custom interceptor server command (default: the bundled `@adtl/interceptors`) |
 | `gateway.principal` | Who runs this gateway: `{ id, type?, claims? }`. `${VAR}` works in `id`. Default: anonymous. See [Authorization](#authorization). |
 | `gateway.roles` | Who may use which tools, prompts and resources. Deny by default once present. See [Authorization](#authorization). |
 | `gateway.cedar` | Cedar policies for attribute-based rules: `{ policies, entities?, timeZone? }`. See [Cedar policies](#cedar-policies). |
 
+#### Interceptor overrides
+
+SEP-2624 lets the gateway owner change how each interceptor runs without changing the interceptor server. Key them by interceptor name:
+
+```yaml
+gateway:
+  interceptorOverrides:
+    adtl.label: { timeoutMs: 10000 }          # a slow ledger on a network drive
+    pii.redact:                                 # a third-party interceptor
+      priorityHint: -50000
+      hooks: [{ events: ["tools/call"], phase: response }]
+```
+
+The gateway refuses to start if an override names an interceptor the server doesn't offer, or lists hooks the interceptor doesn't declare: hooks can only be narrowed. `gateway.mode: audit` (or `--audit`) still wins over a per-interceptor `mode`. Overrides that relax `adtl.policy` or `adtl.label` (`mode: audit`, `failOpen: true`, or narrowed `hooks`) are allowed, with a warning at startup.
+
 #### Checking the audit log
 
-Each entry lists the interceptors that ran for the call, with the execution policy each ran under, as SEP-2624 asks: `interceptors: [{ name, phase, mode, modeFrom, failOpen, failOpenFrom, failed? }]`, where `*From` is `override` (set by the gateway, e.g. `--audit`) or `default` (declared by the interceptor).
+Each entry lists the interceptors that ran for the call, with the execution policy each ran under, as SEP-2624 asks: `interceptors: [{ name, phase, mode, modeFrom, failOpen, failOpenFrom, timeoutMs, failed? }]`, where `*From` is `override` (set by the gateway: `--audit` or `interceptorOverrides`) or `default` (declared by the interceptor).
 
 Each line carries `prev`, the hash of the line before, and `hash`, over the line itself. Check the chain with:
 

@@ -28,7 +28,7 @@ import {
 } from "./config.js";
 import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
-import { InterceptorInvoker } from "./invoker.js";
+import { InterceptorInvoker, checkOverrides } from "./invoker.js";
 import { NtfyNotifier } from "./ntfy.js";
 import { RoleAuthorizer } from "./roles.js";
 
@@ -244,8 +244,17 @@ export async function startGateway(
         throw new GatewayConfigError(`The interceptor server does not offer ${required}; refusing to start without it`);
       }
     }
+    const overrides = loaded.gateway.interceptorOverrides;
+    const problems = checkOverrides(bound.map((b) => b.definition), overrides);
+    if (problems.length) throw new GatewayConfigError(`gateway.interceptorOverrides: ${problems.join("; ")}`);
+    for (const name of [POLICY_INTERCEPTOR, LABEL_INTERCEPTOR]) {
+      const o = overrides[name];
+      if (o?.mode === "audit" || o?.failOpen === true || o?.hooks) {
+        log.warn(`gateway.interceptorOverrides relaxes ${name} (${Object.keys(o).join(", ")}): calls it would stop may get through`);
+      }
+    }
     const audit = loaded.gateway.mode === "audit";
-    const invoker = new InterceptorInvoker(bound, loaded.gateway.interceptorTimeoutMs, audit ? "audit" : undefined);
+    const invoker = new InterceptorInvoker(bound, loaded.gateway.interceptorTimeoutMs, audit ? "audit" : undefined, overrides);
     log.info(`interceptors: ${names.join(", ")}`);
     if (shared) log.info(`sharing session labels with Claude Code hooks (${shared.dir})`);
     if (audit) log.warn("audit mode: calls are logged but never stopped or changed");

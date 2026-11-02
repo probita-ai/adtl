@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 — experimental
+
+Not released yet.
+
+### `@adtl/gateway`
+- Per-interceptor overrides ([#50](https://github.com/probita-ai/adtl/issues/50)): `gateway.interceptorOverrides.<name>` sets `failOpen`, `priorityHint`, `mode`, `timeoutMs` and `hooks` for one interceptor, as SEP-2624's Invoker Overrides describe. Hooks can only be narrowed; an override that widens them, or names an interceptor the server doesn't offer, stops startup. `gateway.mode: audit` still wins over a per-interceptor `mode`, and overrides that relax `adtl.policy` or `adtl.label` log a warning.
+- The audit log's `interceptors` entries now carry `timeoutMs`, and `modeFrom` / `failOpenFrom` say `override` when an override applies.
+- The invoker enforces each interceptor's timeout itself, so an interceptor client that ignores the timeout can no longer hang a call.
+- `checkOverrides()`, `resolvePriority()` and the `InterceptorOverrides` type are exported.
+
 ## 0.7.0 — experimental
 
 The exfiltration attack now runs against GitHub's real MCP server, and Cedar policies can decide who may use which tools.
