@@ -50,6 +50,8 @@ import {
   evaluatePolicy,
   labelResult,
   readRecordLabels,
+  recordIds,
+  recordIdKeys,
   scopeRecord,
   stampRecordLabel,
   toolEgress,
@@ -351,11 +353,19 @@ export class AdtlInterceptors {
         info.records = { stamps: carried.records, writers: carried.writers };
       }
     }
+    // Record ids the ledger knows: labels that survive servers that replace or drop stamps.
+    const idField = tool !== undefined ? (server?.tools[tool]?.recordIds ?? server?.defaults?.recordIds) : undefined;
+    const ids = this.ledger && idField ? recordIds(result, idField) : [];
     if (this.ledger) {
       const match = this.ledger.lookup(valueHashes(result));
       if (match) {
         label = join(label, match.label);
         info.ledger = { chunks: match.chunks, writers: match.writers };
+      }
+      const byId = ids.length ? this.ledger.lookup(recordIdKeys(config.server, ids)) : undefined;
+      if (byId) {
+        label = join(label, byId.label);
+        info.recordIds = { matched: byId.chunks, writers: byId.writers };
       }
     }
     info.label = label;
@@ -368,6 +378,12 @@ export class AdtlInterceptors {
       if (this.ledger && sent !== undefined) {
         const source = { server: config.server, ...(tool !== undefined ? { tool } : {}), ...(prompt !== undefined ? { prompt } : {}) };
         this.ledger.record(valueHashes(sent), before, sessionId, source);
+      }
+      // A write tool's records (ids it was given, and ids it returned) carry what the session had seen.
+      if (this.ledger && idField && (server?.tools[tool!]?.labelInto ?? server?.defaults?.labelInto) !== undefined) {
+        const written = [...new Set([...recordIds(sent ?? {}, idField), ...ids])];
+        const source = { server: config.server, ...(tool !== undefined ? { tool } : {}) };
+        if (written.length) this.ledger.record(recordIdKeys(config.server, written), before, sessionId, source);
       }
       info.sessionLabel = this.sessions.observe(sessionId, label);
     } else {

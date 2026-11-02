@@ -26,6 +26,7 @@
  * A server that drops or rewrites the field gets no help from this; give its
  * read tools a strict rule instead.
  */
+import { digest } from "./canonical.js";
 import { CONFIDENTIALITY_LEVELS, INTEGRITY_LEVELS, join, type Label, type Origin } from "./label.js";
 
 /** Prefix of the stamp keys inside the record's field: `adtl/record-label/<session>`. */
@@ -151,4 +152,35 @@ export function readRecordLabels(result: unknown, defaults: Pick<Label, "integri
 
   visit(result, 0);
   return label ? { label, records, writers: [...writers] } : undefined;
+}
+
+/**
+ * Record ids in a value: string values of fields named `field` (e.g. `id`)
+ * and string items of fields named `<field>s` (e.g. `ids`), at any depth.
+ * Used to remember tainted writes by record id in the ledger, so a label
+ * survives servers that replace or drop a record's metadata on update.
+ */
+export function recordIds(value: unknown, field: string): string[] {
+  const ids = new Set<string>();
+  let nodes = 0;
+  const visit = (v: unknown, depth: number): void => {
+    if (++nodes > MAX_NODES || depth > MAX_DEPTH) return;
+    if (Array.isArray(v)) {
+      for (const x of v) visit(x, depth + 1);
+      return;
+    }
+    if (!isRecord(v)) return;
+    for (const [k, x] of Object.entries(v)) {
+      if (k === field && typeof x === "string" && x !== "") ids.add(x);
+      else if (k === `${field}s` && Array.isArray(x)) for (const i of x) if (typeof i === "string" && i !== "") ids.add(i);
+      visit(x, depth + 1);
+    }
+  };
+  visit(value, 0);
+  return [...ids];
+}
+
+/** Ledger keys for record ids of one server. */
+export function recordIdKeys(server: string, ids: readonly string[]): string[] {
+  return ids.map((id) => digest({ record: id, server }));
 }

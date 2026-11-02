@@ -506,7 +506,7 @@ export class AdtlGateway {
     }
     const label = infoOf(res, "adtl.label");
     finish({ outcome: "forwarded", ...audit, label: label.label, ...(label.ledger ? { ledger: label.ledger } : {}),
-      ...(label.records ? { records: label.records } : {}), sessionLabel: label.sessionLabel, warnings });
+      ...(label.records ? { records: label.records } : {}), ...(label.recordIds ? { recordIds: label.recordIds } : {}), sessionLabel: label.sessionLabel, warnings });
     return (res.payload as { result: R }).result;
   }
 
@@ -670,6 +670,7 @@ export class AdtlGateway {
       label: label.label,
       ...(label.ledger ? { ledger: label.ledger } : {}),
       ...(label.records ? { records: label.records } : {}),
+      ...(label.recordIds ? { recordIds: label.recordIds } : {}),
       sessionLabel: label.sessionLabel,
       warnings: [...req.warnings, ...res.warnings],
     });

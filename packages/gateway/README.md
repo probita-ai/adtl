@@ -384,16 +384,18 @@ Some memory servers extract facts with a model on write, or merge records, so wh
 servers:
   memory:
     tools:
-      add_memory:    { egress: internal, labelInto: metadata, scopeInto: run_id }
-      update_memory: { egress: internal, labelInto: metadata }
-      search_memory: { integrity: trusted, confidentiality: public, egress: none, readLabels: true }
+      add_memory:    { egress: internal, labelInto: metadata, scopeInto: run_id, recordIds: id }
+      update_memory: { egress: internal, labelInto: metadata, recordIds: id }
+      search_memory: { integrity: trusted, confidentiality: public, egress: none, readLabels: true, recordIds: id }
 ```
 
 - **Write.** On every `add_memory` and `update_memory` call the gateway sets `metadata["adtl/record-label/<session>"]` to `{ integrity, confidentiality, writer }` from the session, and drops any stamp keys the agent put there. Each session stamps under its own key, so on a server that lays an update's metadata over the stored metadata (as Mem0 does), a clean session's update adds a stamp instead of replacing a tainted one.
 - **Read.** On `search_memory`, stamps anywhere in the result (also inside JSON text) are joined into its label, with the origin `adtl-record` / `session:<id>`, and the audit entry gets `records: { stamps, writers }`. Anyone who can write to the store can write a stamp, so stamps only make a label stricter. A malformed stamp counts as the global defaults.
 - **Scope.** Some servers also keep recent raw messages per scope, without metadata, and resolve references in a new message from them: Mem0 keeps the last 10 per `user_id`/`agent_id`/`run_id` and asks its extractor to resolve pronouns from them. A clean session writing under a tainted session's ids could then store a fact built from the tainted text, with a clean stamp. With `scopeInto: run_id`, a tainted session's writes get a run id named after its label (`<run_id>:adtl-untrusted-public`, or just `adtl-untrusted-public`), so the server keeps its messages apart. Clean sessions keep their ids, minus any label mark the agent added, so they can't join a tainted scope. Mem0 filters searches by the ids a call sets: a read that names the agent's own `run_id` doesn't see the tainted session's records, and one by `user_id` alone sees them all, with their stamps.
 - **Tools that return text without metadata** can't carry the label, and the ledger can't recognize extracted text. Give them a strict rule, such as `integrity: untrusted`. In Mem0 that is `history()`, and on Mem0's hosted MCP server `list_events` and `get_event_status`.
-- **Servers that drop or replace metadata** (when they consolidate records, or an update overwrites the metadata instead of merging it) can't carry the label either. Give their read tools a strict rule.
+- **Record ids.** With `recordIds: id` (and the ledger on), the gateway also remembers a tainted session's writes by record id: the ids a write tool is given (`update_memory`'s `id`) and returns (`add_memory`'s `ids`). Reads join the label back for any id they return, and the audit entry gets `recordIds: { matched, writers }`. This keeps the label when a server's update replaces the metadata instead of merging it, which [Mem0's hosted docs](https://github.com/probita-ai/adtl/issues/48) describe for `update_memory`.
+- **Merges.** A server that folds records together (Mem0's hosted Merge) keeps the label when the merged text still holds the tainted text as a whole line or paragraph (the ledger recognizes it), and the hidden, merged-away record keeps it by id. A merge that rewords the text loses it: if your account runs Merge, give the read tools a strict rule.
+- **Servers that drop or replace metadata** without returning record ids (when they consolidate records into new ones, for example) can't carry the label either. Give their read tools a strict rule.
 
 ## FIDES and fides-gateway
 

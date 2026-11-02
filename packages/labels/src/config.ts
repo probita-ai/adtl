@@ -47,6 +47,12 @@ export const ToolRuleSchema = z
     readLabels: z.boolean().optional(),
     /** Write tools: scope-id argument (e.g. `run_id`) that keeps a tainted session's writes in a scope of their own. */
     scopeInto: z.string().min(1).optional(),
+    /**
+     * Field naming record ids (e.g. `id`; `ids` lists are read too). With the ledger, a tainted session's
+     * writes are remembered by record id, and reads join the label back by id, even if the server
+     * replaced or dropped the record's stamps.
+     */
+    recordIds: z.string().min(1).optional(),
   })
   .strict();
 export type ToolRule = z.infer<typeof ToolRuleSchema>;

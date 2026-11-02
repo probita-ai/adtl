@@ -51,6 +51,8 @@ export interface AuditEntry {
   ledger?: unknown;
   /** Present when the result carried record label stamps: how many, and which sessions wrote them. */
   records?: unknown;
+  /** Present when the ledger knew record ids in the result (tool rule `recordIds`): how many, and which sessions wrote them. */
+  recordIds?: unknown;
   sessionLabel?: unknown;
   /** Every interceptor invocation for this call, with its resolved mode and failOpen and where each came from (SEP-2624). */
   interceptors?: InterceptorRun[];

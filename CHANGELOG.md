@@ -23,10 +23,12 @@ Not released yet.
 - `attachLabel()` takes an options argument (`{ fides: { readers } }`), and `unionClaims()` is exported.
 
 ### `@adtl/interceptors`
+- Record ids ([#48](https://github.com/probita-ai/adtl/issues/48)): tool rule `recordIds: <field>` makes `adtl.label` remember a tainted session's writes by record id in the ledger (ids the write tool was given and returned), and join the label back on reads that return those ids. Labels on records now survive servers whose update replaces the metadata, as Mem0's hosted docs describe. Audit entries get `recordIds: { matched, writers }`.
 - With `fides.emit`, `adtl.label` puts the session's label on every outgoing `tools/call` request, as `_meta["com.github.ifc/labels"]["$"]`. Readers come from `fides.readers`, else the call's principal, else nobody.
 - `adtl.policy` reads action-metadata from `config.toolAnnotations`, which the gateway already passes from `tools/list`.
 
 ### Examples
+- `examples/fake-memory` can act like Mem0's hosted platform as its docs describe it: `updateMode: "replace"` (`--update-replace`) replaces metadata on update, and `merge: true` (`--merge`) folds a barer record into a fuller one and hides it unless `search_memory` is called with `include_merged`. New tests cover both. Records added in one call now get distinct ids.
 - `examples/a2a-labels`: two agents pass a tainted summary over A2A; the receiver inherits the label and asks before posting, and a tampered message fails closed.
 - `examples/fides-interop`: an opt-in check that runs ADTL's emitted labels through fides-gateway's own models and label resolution, in your local fides-gateway checkout. Not part of `npm test`.
 
