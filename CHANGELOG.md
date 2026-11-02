@@ -9,6 +9,15 @@ Not released yet.
 - The audit log's `interceptors` entries now carry `timeoutMs`, and `modeFrom` / `failOpenFrom` say `override` when an override applies.
 - The invoker enforces each interceptor's timeout itself, so an interceptor client that ignores the timeout can no longer hang a call.
 - `checkOverrides()`, `resolvePriority()` and the `InterceptorOverrides` type are exported.
+- `init` drafts egress from a tool's action-metadata `destination` ahead of `readOnlyHint` / `openWorldHint`.
+
+### `@adtl/labels`
+- Draft action-metadata ([#52](https://github.com/probita-ai/adtl/issues/52)): `returnMetadata.source` and `.sensitivity` feed result labels, `inputMetadata.destination` feeds egress, and `outcome` / `requiresReview` are new policy conditions (`tool.outcome`, `tool.requiresReview`). Claims from any server can make labels or egress stricter; relaxing needs `acceptServerClaims: true` and never overrides your rules.
+- `requiresReview: true` turns an `allow` into an `ask` (`matched: ["tool.requiresReview"]`). Turn it off with `policy.honorRequiresReview: false`.
+- `readActionMetadata()` and the mapping helpers are exported; `toolEgress()` takes the tool's annotations as an optional fourth argument.
+
+### `@adtl/interceptors`
+- `adtl.policy` reads action-metadata from `config.toolAnnotations`, which the gateway already passes from `tools/list`.
 
 ## 0.7.0 — experimental
 

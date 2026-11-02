@@ -6,7 +6,7 @@ The core of ADTL, with no MCP transport and no I/O:
 
 - **Labels**: integrity (`trusted` / `unknown` / `untrusted`), confidentiality (`public` / `private` / `secret`), and origins. Combining labels keeps the lowest integrity and the highest confidentiality, so a label only gets stricter.
 - **trust-annotations codec**: reads and writes `_meta["io.modelcontextprotocol/trust-annotations"]` following the draft's rules. An absent field means "no claim". A content block can add restrictions but never remove them.
-- **Labeling rules**: your config decides labels. Servers' own claims can make labels stricter, and can relax them only when the server is allowlisted.
+- **Labeling rules**: your config decides labels. Servers' own claims (trust-annotations on results, the draft `action-metadata` on tools) can make labels stricter, and can relax them only when the server is allowlisted.
 - **Policy evaluation**: `allow` / `ask` / `block`. The most restrictive matching rule wins.
 - **Call hashing**: canonical JSON (RFC 8785 style) and SHA-256, so a decision is bound to one exact call.
 

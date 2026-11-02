@@ -75,6 +75,20 @@ One file holds both the labels and the gateway settings.
 
 Tools without a rule use the defaults (`untrusted`, `private`, egress `unknown`). That's safe but strict, so describe the tools you use. Resources and prompts use the server's `defaults`.
 
+#### Tools that describe themselves: action-metadata
+
+Some servers annotate their tools with the Tool Annotations IG's draft [`action-metadata`](https://github.com/modelcontextprotocol/experimental-ext-tool-annotations/blob/main/specification/draft/action-metadata.mdx) extension (`annotations["io.modelcontextprotocol/action-metadata"]`). The gateway reads it as the server's own claim:
+
+| Field | Used as | From any server | Only with `acceptServerClaims: true` |
+|---|---|---|---|
+| `returnMetadata.source` | result integrity | `open-world` makes it `untrusted` | `first-party` makes it `trusted` |
+| `returnMetadata.sensitivity` | result confidentiality | anything but `public` makes it at least `private` (`credentials` / `secret`: `secret`) | `public` |
+| `inputMetadata.destination` | egress | `external` / `public`, or anything stricter than your rule | `local` / `internal` (as `internal`), `none` |
+| `outcome` | policy condition `tool.outcome` | yes | |
+| `requiresReview` | `ask` before the call | yes | |
+
+Your rules still come first: a claim can make them stricter, never looser. Unknown values are ignored. The extension is a draft, so its values may change.
+
 #### Drafting rules with `init`
 
 List your servers under `gateway.upstreams`, then let `init` draft a rule for every tool:
@@ -87,7 +101,7 @@ adtl-gateway init -c adtl.yaml --write   # update the file (original kept as adt
 `init` connects to each upstream and lists its tools.
 
 - **Presets** cover the GitHub (`github-mcp-server`), filesystem and fetch servers, Slack (`@modelcontextprotocol/server-slack` and `slack-mcp-server`) and Gmail (`@gongrzhe/server-gmail-autoauth-mcp`). A preset says what the server's reads and writes mean; the server's `readOnlyHint` decides which tools are reads, so new tools are covered too. For servers without hints, the preset lists their tools by name. Slack messages and email are untrusted and private; posting to Slack is external egress, and so are sending email and Gmail filters, which can forward mail.
-- **Other servers** get rules from their MCP tool hints. Hints only set egress, because they are the server's own claims: every result stays `untrusted` and `private` until you change it. These lines are marked `review`.
+- **Other servers** get rules from their action-metadata destination if they declare one, else their MCP tool hints. Either only sets egress, because they are the server's own claims: every result stays `untrusted` and `private` until you change it. These lines are marked `review`.
 - Entries already in the file are never changed, so you can re-run `init` after a server adds tools. Tools the server no longer offers are reported, not removed.
 - Edits keep your comments, but the YAML may be reformatted slightly (e.g. `[a]` becomes `[ a ]`).
 
@@ -114,7 +128,7 @@ Labels only get stricter as a session goes on. A session that has read anything 
 
 ### Policy
 
-Rules match on `session.integrity`, `session.confidentiality`, `tool.egress` and `tool` (`server.tool` globs such as `github.*`), and decide `allow`, `ask` or `block`. When several rules match, the most restrictive decision wins. `ask` waits for a human when [approvals](#approvals) are configured, and blocks otherwise.
+Rules match on `session.integrity`, `session.confidentiality`, `tool.egress`, `tool` (`server.tool` globs such as `github.*`), and, for tools that declare [action-metadata](#tools-that-describe-themselves-action-metadata), `tool.outcome` (`benign`, `consequential`, `irreversible`) and `tool.requiresReview`. They decide `allow`, `ask` or `block`. When several rules match, the most restrictive decision wins. A tool that says `requiresReview: true` gets `ask` when no rule blocks it; set `policy.honorRequiresReview: false` to turn that off. `ask` waits for a human when [approvals](#approvals) are configured, and blocks otherwise.
 
 ### Gateway
 

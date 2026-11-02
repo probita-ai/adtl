@@ -220,6 +220,14 @@ describe("adtl.policy", () => {
     expect(r.valid).toBe(true);
   });
 
+  it("reads action-metadata from the invoker's config: requiresReview asks", () => {
+    const call = policyCall("list_repos", {}, "s1");
+    const annotations = { "io.modelcontextprotocol/action-metadata": { requiresReview: true } };
+    const r = make().invoke({ ...call, config: { ...call.config, toolAnnotations: annotations } }) as ValidationResult;
+    expect(r.info).toMatchObject({ [DECISION_INFO_KEY]: "ask", matched: ["tool.requiresReview"] });
+    expect(r.confirmation).toBeDefined();
+  });
+
   it("fails closed without a session id", () => {
     const r = make().invoke(policyCall("list_repos")) as ValidationResult;
     expect(r).toMatchObject({ valid: false, severity: "error" });

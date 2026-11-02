@@ -76,6 +76,10 @@ export const PolicyRuleSchema = z
         "tool.egress": oneOrMany(egress).optional(),
         /** `server.tool` names; `*` matches any run of characters, e.g. `github.*`. */
         tool: oneOrMany(z.string().min(1)).optional(),
+        /** The tool's action-metadata `outcome`, e.g. `irreversible`. Tools that declare none never match. */
+        "tool.outcome": oneOrMany(z.string().min(1)).optional(),
+        /** The tool's action-metadata `requiresReview`. Tools that declare none count as false. */
+        "tool.requiresReview": z.boolean().optional(),
       })
       .strict(),
     then: z.enum(DECISIONS),
@@ -91,6 +95,8 @@ export const PolicySchema = z
   .object({
     default: z.enum(DECISIONS).default("allow"),
     rules: z.array(PolicyRuleSchema).default([]),
+    /** Ask a human before tools whose action-metadata says `requiresReview: true`, when no rule blocks them. */
+    honorRequiresReview: z.boolean().default(true),
   })
   .strict();
 export type Policy = z.infer<typeof PolicySchema>;

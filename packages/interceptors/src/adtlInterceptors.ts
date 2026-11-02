@@ -53,6 +53,7 @@ import {
   scopeRecord,
   stampRecordLabel,
   toolEgress,
+  readActionMetadata,
   type AdtlConfig,
   type Decision,
   type Label,
@@ -395,11 +396,14 @@ export class AdtlInterceptors {
     }
 
     const session = this.sessions.get(sessionId);
+    const meta = readActionMetadata(config.toolAnnotations);
     const d = evaluatePolicy(this.config.policy, {
       session,
       server: config.server,
       tool,
-      egress: toolEgress(this.config, config.server, tool),
+      egress: toolEgress(this.config, config.server, tool, config.toolAnnotations),
+      ...(meta.outcome !== undefined ? { outcome: meta.outcome } : {}),
+      ...(meta.requiresReview !== undefined ? { requiresReview: meta.requiresReview } : {}),
     });
     if (d.decision !== "ask") return this.decision(params, d.decision, d.reason, d.matched, hash, session);
 

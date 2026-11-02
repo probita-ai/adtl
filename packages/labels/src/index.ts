@@ -2,6 +2,7 @@ export * from "./label.js";
 export * from "./canonical.js";
 export * from "./recordLabel.js";
 export * from "./trustAnnotations.js";
+export * from "./actionMetadata.js";
 export * from "./config.js";
 export * from "./labeler.js";
 export * from "./policy.js";

@@ -4,13 +4,15 @@
  * Without a preset, rules come from the MCP tool annotations. Those are the
  * server's own claims, so they only decide egress; integrity is always
  * untrusted and confidentiality private until the owner says otherwise.
+ * The draft action-metadata extension's `inputMetadata.destination`, when a
+ * tool declares one, decides egress ahead of the legacy hints.
  * Missing hints take the MCP spec defaults (readOnlyHint false, openWorldHint true).
  *
  * Merging never changes an entry that is already in the file: the owner's
  * choices win, and `init` can be re-run to pick up new tools.
  */
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import type { ToolRule } from "@adtl/labels";
+import { destinationEgress, readActionMetadata, type ToolRule } from "@adtl/labels";
 import { isMap, isScalar, type Document, type YAMLMap } from "yaml";
 import { choosePreset, PRESETS, type Preset } from "./presets.js";
 
@@ -40,6 +42,13 @@ const UNKNOWN_DEFAULTS: ToolRule = { integrity: "untrusted", confidentiality: "p
 
 /** A rule from the tool's MCP annotations alone. */
 export function ruleFromHints(annotations: Tool["annotations"]): Omit<ToolSuggestion, "name"> {
+  const meta = readActionMetadata(annotations);
+  const declared = destinationEgress(meta.destination);
+  if (declared) {
+    const extra = [meta.outcome, meta.requiresReview ? "requires review" : undefined].filter(Boolean).join(", ");
+    const why = `action-metadata: destination ${meta.destination}${extra ? `, ${extra}` : ""} (review)`;
+    return { rule: { integrity: "untrusted", confidentiality: "private", egress: declared }, why };
+  }
   const readOnly = annotations?.readOnlyHint === true;
   const openWorld = annotations?.openWorldHint !== false;
   const egress = readOnly ? (openWorld ? "external" : "none") : openWorld ? "public" : "internal";
