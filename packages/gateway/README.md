@@ -254,6 +254,27 @@ gateway:
 - It's off by default because a client that accepts elicitations by itself, without a person, would approve calls. Turn it on only for clients that always show the prompt to you.
 - It's never used for rules with named approvers: the client can't say who answered.
 
+#### Approving with an authenticator app
+
+For a stronger answer than a click, ask for a 6-digit code from an authenticator app (Google Authenticator, 1Password, ...). Codes are made offline on your phone, and a client that accepts prompts by itself can't produce one.
+
+```sh
+adtl-gateway totp setup          # shows a QR code to scan; --force replaces an existing secret
+adtl-gateway totp check 123456   # does this code match right now? (doesn't use it up)
+```
+
+```yaml
+gateway:
+  approvals:
+    totp: true            # wins over elicitation: true
+```
+
+- The prompt appears in the client, as with elicitation, and asks for the code. The model never sees the prompt or the code. Three wrong codes, declining or no answer stops the call.
+- A code works for the one pending call, once, within one 30-second step either way. The last used step is kept next to the secret, so a code can't be replayed after a restart.
+- The secret is kept in the macOS Keychain, or elsewhere in a file only you can read (`ADTL_TOTP_FILE`, default `~/.adtl/totp-secret`). The gateway won't start with `totp: true` and no secret.
+- Clients without elicitation support aren't asked: other configured channels still work, and with none the call is blocked. It's never used for rules with named approvers.
+- An agent with shell access as the same user may still be able to read the secret. The hooks refuse writes to these files and ask before commands that mention them, but that's a speed bump. To rule it out, run the gateway on another machine.
+
 #### Who may approve
 
 By default, whoever can read the shared topic can approve, and ADTL can't tell who did. A policy rule can name the roles whose members may answer instead. Each member gets their own topic:
@@ -551,7 +572,7 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 
 - Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
 - Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
-- Approvals come from ntfy, email notices and, with `elicitation: true`, the MCP client. Authenticator-app codes (TOTP) are planned.
+- Approvals come from ntfy, email notices and, through the MCP client, a prompt (`elicitation: true`) or an authenticator code (`totp: true`).
 - Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, and [sub-agents](#sub-agents) share their parent's label, but the gateway doesn't sign or read [A2A](../../docs/a2a-trust-labels-v1.md) messages itself yet. Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
 - The Claude Code hooks label tools by name, not by what they touched: a `Read` of a downloaded file is as trusted as a `Read` of your own code.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.

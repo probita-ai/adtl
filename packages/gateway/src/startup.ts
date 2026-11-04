@@ -30,6 +30,7 @@ import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
 import { InterceptorInvoker, checkOverrides, duplicateInterceptors, mutatorsAfter, unsupportedInterceptors } from "./invoker.js";
 import { OpenFgaAuthorizer } from "./openfga.js";
+import { loadTotpVerifier } from "./totp.js";
 import { NtfyNotifier } from "./ntfy.js";
 import { RoleAuthorizer } from "./roles.js";
 
@@ -125,12 +126,13 @@ export function createApprovals(cfg: GatewayConfig, env: NodeJS.ProcessEnv, log:
   const approverChannels = new Map<string, Notifier[]>(
     Object.entries(a.approvers ?? {}).map(([id, c]) => [id, [new NtfyNotifier({ ...c.ntfy, name: `ntfy:${id}` })]]),
   );
-  if (notifiers.length === 0 && approverChannels.size === 0 && !a.elicitation) return undefined;
-  if (!notifiers.some((n) => n.listen) && approverChannels.size === 0 && !a.elicitation) {
+  if (notifiers.length === 0 && approverChannels.size === 0 && !a.elicitation && !a.totp) return undefined;
+  if (!notifiers.some((n) => n.listen) && approverChannels.size === 0 && !a.elicitation && !a.totp) {
     log.warn('no approval channel can carry answers (configure gateway.approvals.ntfy); "ask" still blocks');
   }
   const approvers = approverChannels.size ? `; approvers: ${[...approverChannels.keys()].join(", ")}` : "";
-  const shared = [...notifiers.map((n) => n.name), ...(a.elicitation ? ["elicitation (if the client supports it)"] : [])];
+  const inClient = a.totp ? ["authenticator code (if the client supports elicitation)"] : a.elicitation ? ["elicitation (if the client supports it)"] : [];
+  const shared = [...notifiers.map((n) => n.name), ...inClient];
   log.info(`approvals: ${shared.join(", ") || "none shared"}${approvers} (timeout ${a.timeoutSeconds}s)`);
   return new ApprovalBroker({ notifiers, approverChannels, timeoutMs: a.timeoutSeconds * 1000, log });
 }
@@ -340,11 +342,14 @@ export async function startGateway(
       if (!principal) log.warn('roles are set but gateway.principal is not: only roles with members ["*"] apply');
     }
     for (const a of authorizers) if (a.name !== "roles") log.info(`authorizer: ${a.name}`);
+    const totp = loaded.gateway.approvals?.totp ? loadTotpVerifier(env) : undefined;
+    if (loaded.gateway.approvals?.totp && !totp) throw new GatewayConfigError("gateway.approvals.totp is on, but no secret is set up: run adtl-gateway totp setup");
     const agent = gatewayAgent(env);
     if (agent) log.info(`agent: ${agent.id}${agent.type ? ` (${agent.type})` : ""}`);
     const gateway = new AdtlGateway({
       ...(shared ? { sessionId: shared.sessionId } : {}),
       ...(agent ? { agent } : {}),
+      ...(totp ? { totp } : {}),
       upstreams,
       invoker,
       ...(auditLog ? { audit: auditLog } : {}),

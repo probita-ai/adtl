@@ -106,6 +106,11 @@ export const ApprovalsConfigSchema = z
      */
     elicitation: z.boolean().default(false),
     /**
+     * Ask in the MCP client for a code from an authenticator app (`adtl-gateway
+     * totp setup`), instead of Allow or Deny. Wins over `elicitation`.
+     */
+    totp: z.boolean().default(false),
+    /**
      * Each approver's own channel, by principal id. Policy rules with
      * `approvers: [role]` ask only these people, so the answer names who approved.
      */

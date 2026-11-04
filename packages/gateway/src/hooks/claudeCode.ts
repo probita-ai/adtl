@@ -26,7 +26,7 @@
  *
  * Errors fail closed: a PreToolUse hook that can't decide denies the call.
  */
-import { basename, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   callHash,
   evaluatePolicy,
@@ -41,6 +41,7 @@ import {
 } from "@adtl/labels";
 import { chunkHashes, valueHashes, type Ledger } from "@adtl/ledger";
 import type { AuditEntry, AuditSink } from "../audit.js";
+import { TOTP_KEYCHAIN_SERVICE } from "../totp.js";
 import type { AgentLinks } from "./agentLinks.js";
 import { CLAUDE_CODE_PRESET, CLAUDE_CODE_SERVER } from "./preset.js";
 
@@ -71,7 +72,7 @@ export interface HookOptions {
   /** Sub-agent → parent session links, from SubagentStart. */
   agents?: AgentLinks;
   /** Files the agent must not change: the ADTL config, the session directory and the ledger. */
-  protect?: { configPath?: string; sessionsDir?: string; ledgerPath?: string; auditPath?: string; signingKeyPath?: string };
+  protect?: { configPath?: string; sessionsDir?: string; ledgerPath?: string; auditPath?: string; signingKeyPath?: string; totpPath?: string };
 }
 
 /** What the hook process prints and exits with. */
@@ -144,6 +145,9 @@ function protectedTarget(input: HookInput, route: { server: string; tool: string
     if (protect.signingKeyPath && abs === resolve(protect.signingKeyPath)) {
       return { decision: "block", reason: "The agent may not touch the ADTL signing key" };
     }
+    if (protect.totpPath && abs.startsWith(dirname(resolve(protect.totpPath)) + sep + "totp-")) {
+      return { decision: "block", reason: "The agent may not touch the ADTL TOTP secret" };
+    }
   }
   const command = typeof args.command === "string" ? args.command : undefined;
   if (command !== undefined && ["Bash", "Monitor"].includes(route.tool)) {
@@ -160,6 +164,9 @@ function protectedTarget(input: HookInput, route: { server: string; tool: string
     }
     if (protect.signingKeyPath && command.includes(basename(protect.signingKeyPath))) {
       return { decision: "ask", reason: "This command touches the ADTL signing key" };
+    }
+    if ([TOTP_KEYCHAIN_SERVICE, "totp-secret", "totp-last-step", protect.totpPath].some((m) => m && command.includes(m))) {
+      return { decision: "ask", reason: "This command touches the ADTL TOTP secret" };
     }
   }
   return undefined;

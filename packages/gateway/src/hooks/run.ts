@@ -13,6 +13,7 @@ import { Ledger, defaultLedgerPath } from "@adtl/ledger";
 import { parseConfigText } from "@adtl/interceptors";
 import { parse as parseYaml } from "yaml";
 import { JsonlAuditLog } from "../audit.js";
+import { totpSecretPath } from "../totp.js";
 import { FileAgentLinks } from "./agentLinks.js";
 import { failure, handleHook, type HookInput, type HookOutcome } from "./claudeCode.js";
 
@@ -52,7 +53,7 @@ export async function runHook(opts: RunHookOptions): Promise<HookOutcome> {
       ...(opts.gatewayServer ? { gatewayServer: opts.gatewayServer } : {}),
       mode: gw.mode === "audit" ? "audit" : "active",
       ...(auditPath ? { audit: new JsonlAuditLog(auditPath) } : {}),
-      protect: { configPath: path, sessionsDir, ledgerPath, ...(auditPath ? { auditPath } : {}), signingKeyPath: defaultSigningKeyPath(env) },
+      protect: { configPath: path, sessionsDir, ledgerPath, ...(auditPath ? { auditPath } : {}), signingKeyPath: defaultSigningKeyPath(env), totpPath: totpSecretPath(env) },
     });
   } catch (err) {
     return failure(input.hook_event_name, (err as Error).message);
