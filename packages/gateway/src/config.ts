@@ -45,7 +45,7 @@ export const StdioUpstreamSchema = z
   .object({
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
-    env: z.record(z.string()).default({}),
+    env: z.record(z.string(), z.string()).default({}),
     cwd: z.string().optional(),
   })
   .strict();
@@ -53,7 +53,7 @@ export const StdioUpstreamSchema = z
 export const HttpUpstreamSchema = z
   .object({
     url: z.string().min(1),
-    headers: z.record(z.string()).default({}),
+    headers: z.record(z.string(), z.string()).default({}),
   })
   .strict();
 
@@ -114,7 +114,7 @@ export const ApprovalsConfigSchema = z
      * Each approver's own channel, by principal id. Policy rules with
      * `approvers: [role]` ask only these people, so the answer names who approved.
      */
-    approvers: z.record(z.object({ ntfy: NtfyConfigSchema }).strict()).optional(),
+    approvers: z.record(z.string(), z.object({ ntfy: NtfyConfigSchema }).strict()).optional(),
   })
   .strict();
 export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>;
@@ -129,7 +129,7 @@ export const PrincipalConfigSchema = z
   .object({
     type: z.enum(["user", "service"]).default("user"),
     id: z.string().min(1),
-    claims: z.record(z.unknown()).optional(),
+    claims: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 export type PrincipalConfig = z.infer<typeof PrincipalConfigSchema>;
@@ -184,6 +184,7 @@ export const OpenFgaConfigSchema = z
     /** Per-tool rules, keyed `server.tool`. `object` is `type:id`, and `{argument}` is taken from the call. */
     tools: z
       .record(
+        z.string(),
         z
           .object({
             relation: z.string().min(1).optional(),
@@ -217,7 +218,7 @@ export const InterceptorOverridesSchema = z
 export const GatewayConfigSchema = z
   .object({
     upstreams: z
-      .record(UpstreamSchema)
+      .record(z.string(), UpstreamSchema)
       .refine((u) => Object.keys(u).length > 0, "At least one upstream server is required")
       .refine((u) => Object.keys(u).every((id) => UPSTREAM_ID.test(id)), {
         message: "Upstream ids may only contain letters, digits and '-' (they prefix tool names as <id>__<tool>)",
@@ -226,7 +227,7 @@ export const GatewayConfigSchema = z
     interceptors: StdioUpstreamSchema.optional(),
     /** More interceptor servers (stdio or Streamable HTTP) whose interceptors run beside ADTL's. */
     interceptorServers: z
-      .record(UpstreamSchema)
+      .record(z.string(), UpstreamSchema)
       .refine((u) => Object.keys(u).every((id) => UPSTREAM_ID.test(id)), {
         message: "Interceptor server ids may only contain letters, digits and '-'",
       })
@@ -243,12 +244,12 @@ export const GatewayConfigSchema = z
     /** Timeout for each interceptor invocation, in milliseconds. */
     interceptorTimeoutMs: z.number().int().positive().default(5000),
     /** Per-interceptor overrides of failOpen, priorityHint, mode, timeoutMs and hooks, by interceptor name. */
-    interceptorOverrides: z.record(InterceptorOverridesSchema).default({}),
+    interceptorOverrides: z.record(z.string(), InterceptorOverridesSchema).default({}),
     /** Who runs this gateway. Passed to the authorizer and the interceptors. Default: anonymous. */
     principal: PrincipalConfigSchema.optional(),
     /** Role-based authorization: when present, a call no role grants is denied. */
     roles: z
-      .record(RoleSchema)
+      .record(z.string(), RoleSchema)
       .refine((r) => Object.keys(r).length > 0, "roles: needs at least one role (remove it to allow everyone)")
       .optional(),
     /** Cedar authorization. With roles as well, both must allow. */

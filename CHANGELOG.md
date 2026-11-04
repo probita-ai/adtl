@@ -4,8 +4,12 @@
 
 Authenticator-app approvals and OpenFGA authorization, a first outside measurement of what ADTL does and doesn't catch, and fixes for gaps left in 0.8.0.
 
+### Security
+- Updated dependencies with published advisories: `@modelcontextprotocol/sdk` 1.32.2, `nodemailer` 10.3.1, `zod` 4.6.7 (a major version), and the transitive `body-parser`, `fast-uri` and `qs`. `npm audit --omit=dev` is clean.
+
 ### Upgrading
 - No config changes are needed. `gateway.approvals.totp` and `gateway.openfga` only apply when you set them.
+- Config error messages come from zod 4, so their wording changed.
 - `evidenceRef` on labeled results now carries `schema`.
 
 ### `@adtl/gateway`

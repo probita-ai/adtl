@@ -122,7 +122,7 @@ export const InvocationParamsSchema = z
     event: z.string().min(1),
     phase: PhaseSchema,
     payload: z.unknown(),
-    config: z.record(z.unknown()).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
     timeoutMs: z.number().int().positive().optional(),
     context: z
       .object({
@@ -130,7 +130,7 @@ export const InvocationParamsSchema = z
           .object({
             type: z.enum(["user", "service", "anonymous"]),
             id: z.string().optional(),
-            claims: z.record(z.unknown()).optional(),
+            claims: z.record(z.string(), z.unknown()).optional(),
           })
           .passthrough()
           .optional(),

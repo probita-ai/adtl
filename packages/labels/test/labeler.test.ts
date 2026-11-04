@@ -84,6 +84,9 @@ describe("parseConfig", () => {
     const c = parseConfig(undefined);
     expect(c.defaults).toEqual({ integrity: "untrusted", confidentiality: "private" });
     expect(c.policy).toEqual({ default: "allow", rules: [], honorRequiresReview: true });
+    // Nested defaults must apply when a whole section is left out, not just when it's present.
+    expect(c.ledger).toEqual({ enabled: true, retentionDays: 90 });
+    expect(c.fides).toEqual({ emit: false });
   });
 
   it("rejects unknown keys and bad values", () => {

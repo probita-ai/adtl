@@ -67,7 +67,7 @@ export const ServerConfigSchema = z
     acceptServerClaims: z.boolean().default(false),
     /** Rule applied to every tool of this server unless the tool overrides it. */
     defaults: ToolRuleSchema.optional(),
-    tools: z.record(ToolRuleSchema).default({}),
+    tools: z.record(z.string(), ToolRuleSchema).default({}),
   })
   .strict();
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
@@ -135,12 +135,12 @@ export const AdtlConfigSchema = z
       .object({ integrity, confidentiality })
       .strict()
       .default({ integrity: "untrusted", confidentiality: "private" }),
-    servers: z.record(ServerConfigSchema).default({}),
-    policy: PolicySchema.default({}),
+    servers: z.record(z.string(), ServerConfigSchema).default({}),
+    policy: PolicySchema.prefault({}),
     /** Label ledger: remembers content written by tainted sessions and re-labels it when it is read back. */
-    ledger: LedgerConfigSchema.default({}),
+    ledger: LedgerConfigSchema.prefault({}),
     /** Interop with FIDES / fides-gateway: also emit labels in its `_meta["com.github.ifc/labels"]` form. */
-    fides: FidesConfigSchema.default({}),
+    fides: FidesConfigSchema.prefault({}),
     /** Settings for adtl-gateway (upstream servers, audit log). Validated by the gateway, ignored here. */
     gateway: z.unknown().optional(),
   })
