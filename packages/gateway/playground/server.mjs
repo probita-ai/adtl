@@ -23,6 +23,7 @@ import {
   InterceptorInvoker,
   JsonlAuditLog,
   bundledInterceptorsCli,
+  checkOverrides,
   connectUpstream,
   loadGatewayConfig,
 } from "../dist/index.js";
@@ -84,7 +85,11 @@ async function close(s) {
 
 /** Fresh servers, ledger, audit log and session. Throws without side effects if the config is invalid. */
 async function build({ adtl, config }) {
-  if (adtl) parseConfigText(config); // a broken adtl.yaml fails here, before anything starts
+  // A broken adtl.yaml fails here, before anything starts.
+  const gateway = adtl ? parseConfigText(config).gateway : undefined;
+  // The playground supplies its own gateway section; only overrides carry over. Interceptor
+  // servers don't: a web page must not be able to start commands.
+  const overrides = gateway?.interceptorOverrides;
   const work = mkdtempSync(join(tmpdir(), "adtl-playground-"));
   const posted = join(work, "posted.jsonl");
   const s = { adtl, config, work, posted, audit: join(work, "audit.jsonl"), timeline: [], sessionNo: 1, closers: [], auditSeen: 0 };
@@ -95,7 +100,9 @@ async function build({ adtl, config }) {
         path,
         config.replace(/^(ledger|gateway):[\s\S]*$/m, "") +
           `\nledger:\n  path: ${JSON.stringify(join(work, "ledger.db"))}\n` +
-          `gateway:\n  audit: ${JSON.stringify(s.audit)}\n  upstreams:\n` +
+          `gateway:\n  audit: ${JSON.stringify(s.audit)}\n` +
+          (overrides ? `  interceptorOverrides: ${JSON.stringify(overrides)}\n` : "") +
+          `  upstreams:\n` +
           `    github:\n      command: ${JSON.stringify(process.execPath)}\n      args: [${JSON.stringify(FAKE_GITHUB)}]\n` +
           `      env: { FAKE_GITHUB_POSTED: ${JSON.stringify(posted)} }\n` +
           `    memory:\n      command: ${JSON.stringify(process.execPath)}\n      args: [${JSON.stringify(FAKE_MEMORY)}]\n`,
@@ -105,7 +112,10 @@ async function build({ adtl, config }) {
         command: process.execPath, args: [bundledInterceptorsCli(), "--config", path], env: {},
       }, work);
       s.closers.push(interceptors);
-      s.invoker = new InterceptorInvoker(await InterceptorInvoker.discover(interceptors), loaded.gateway.interceptorTimeoutMs);
+      const bound = await InterceptorInvoker.discover(interceptors);
+      const problems = checkOverrides(bound.map((b) => b.definition), loaded.gateway.interceptorOverrides);
+      if (problems.length) throw new Error(`gateway.interceptorOverrides: ${problems.join("; ")}`);
+      s.invoker = new InterceptorInvoker(bound, loaded.gateway.interceptorTimeoutMs, undefined, loaded.gateway.interceptorOverrides);
       s.upstreams = new Map();
       for (const [id, u] of Object.entries(loaded.gateway.upstreams)) {
         const c = await connectUpstream(id, u, work);

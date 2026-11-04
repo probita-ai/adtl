@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 // @ts-expect-error -- plain JS shipped with the package
 import { startPlayground } from "../playground/server.mjs";
 
@@ -8,6 +10,7 @@ interface Playground {
   close(): Promise<void>;
 }
 
+const EXAMPLE = fileURLToPath(new URL("../../../examples/adtl.yaml", import.meta.url));
 const running: Playground[] = [];
 afterEach(async () => {
   await Promise.allSettled(running.splice(0).map((p) => p.close()));
@@ -107,6 +110,18 @@ describe("adtl-gateway playground", () => {
     expect(bad.error).toBeTruthy();
     const s = await a.get("/api/state");
     expect(s.adtl).toBe(true);
+    expect((await a.call("github__list_repos", {})).audit).toMatchObject({ outcome: "forwarded" });
+  });
+
+  it("applies interceptor overrides from the config, and refuses bad ones", async () => {
+    const a = api(await start());
+    const labels = readFileSync(EXAMPLE, "utf8").replace(/gateway:[\s\S]*$/, "");
+    const applied = await a.post("/api/reset", { config: `${labels}gateway:\n  interceptorOverrides:\n    adtl.policy: { timeoutMs: 1234 }\n` });
+    expect(applied.error).toBeFalsy();
+    const { audit } = await a.call("github__list_repos", {});
+    expect(audit.interceptors).toContainEqual(expect.objectContaining({ name: "adtl.policy", timeoutMs: 1234 }));
+    const bad = await a.post("/api/reset", { config: `${labels}gateway:\n  interceptorOverrides:\n    typo: { mode: audit }\n` });
+    expect(bad.error).toMatch(/no such interceptor/);
     expect((await a.call("github__list_repos", {})).audit).toMatchObject({ outcome: "forwarded" });
   });
 

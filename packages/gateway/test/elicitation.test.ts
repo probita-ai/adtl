@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema, type CallToolResult, type ElicitRequest, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import { AdtlInterceptors, createInterceptorServer, parseConfigText } from "@adtl/interceptors";
-import { AdtlGateway, ApprovalBroker, InterceptorInvoker, MemoryAuditLog } from "../src/index.js";
+import { AdtlGateway, ApprovalBroker, InterceptorInvoker, MemoryAuditLog, TotpVerifier, totpCode, totpStep } from "../src/index.js";
 // @ts-expect-error -- plain JS example module
 import { createFakeGithubServer } from "../../../examples/fake-github/server.mjs";
 
@@ -31,7 +31,7 @@ const plain = (name: string) => new Client({ name, version: "0.0.0" });
  * how the person in the client responds to an elicitation; omit it for a
  * client without the capability.
  */
-async function setup(opts: { answer?: (req: ElicitRequest) => ElicitResult; elicit?: boolean; approverRule?: boolean } = {}) {
+async function setup(opts: { answer?: (req: ElicitRequest) => ElicitResult; elicit?: boolean; approverRule?: boolean; totp?: TotpVerifier } = {}) {
   const text = readFileSync(CONFIG, "utf8");
   const config = parseConfigText(opts.approverRule ? text.replace("then: ask\n", "then: ask\n      approvers: [leads]\n") : text);
   const posted: unknown[] = [];
@@ -43,6 +43,7 @@ async function setup(opts: { answer?: (req: ElicitRequest) => ElicitResult; elic
     audit,
     approvals: new ApprovalBroker({ notifiers: [], timeoutMs: 2000 }),
     elicitApprovals: opts.elicit ?? true,
+    ...(opts.totp ? { totp: opts.totp } : {}),
     ...(opts.approverRule ? { approverRoles: new Map([["leads", ["alice"]]]) } : {}),
     logger: { info: () => {}, warn: () => {} },
   });
@@ -102,5 +103,48 @@ describe("approvals in the MCP client (elicitation)", () => {
     expect(r.isError).toBe(true);
     expect(s.asked).toEqual([]);
     expect(s.posted).toHaveLength(0);
+  });
+});
+
+describe("approvals with an authenticator code (gateway.approvals.totp)", () => {
+  const secret = Buffer.from("12345678901234567890");
+  const NOW = 1_800_000_000_000;
+  const verifier = () => {
+    let last = 0;
+    return new TotpVerifier(secret, { lastStep: () => last, setLastStep: (s) => (last = s) }, () => NOW);
+  };
+  const good = totpCode(secret, totpStep(NOW));
+
+  it("asks for a code instead of Allow or Deny, and runs the call on the right one", async () => {
+    const s = await setup({ elicit: false, totp: verifier(), answer: () => ({ action: "accept", content: { code: good } }) });
+    expect((await s.post()).isError).toBeFalsy();
+    expect(s.posted).toHaveLength(1);
+    expect(s.asked[0]?.params.message).toContain("Enter the code from your authenticator app");
+    expect(JSON.stringify(s.asked[0]?.params)).not.toContain('"decision"');
+    expect(s.audit.entries.at(-1)).toMatchObject({ approval: { outcome: "approved", channel: "elicitation" } });
+  });
+
+  it("can't be approved by a client that accepts prompts by itself", async () => {
+    const s = await setup({ totp: verifier(), answer: () => ({ action: "accept", content: { decision: "allow" } }) });
+    expect((await s.post()).isError).toBe(true);
+    expect(s.posted).toHaveLength(0);
+    expect(s.asked).toHaveLength(3);
+  });
+
+  it("lets the person retry a wrong code, says so, and stops on decline", async () => {
+    const answers = ["000000", good];
+    const s = await setup({ totp: verifier(), answer: () => ({ action: "accept", content: { code: answers.shift()! } }) });
+    expect((await s.post()).isError).toBeFalsy();
+    expect(s.asked[1]?.params.message).toContain("That code was not right");
+    const declined = await setup({ totp: verifier(), answer: () => ({ action: "decline" }) });
+    expect((await declined.post()).isError).toBe(true);
+    expect(declined.asked).toHaveLength(1);
+  });
+
+  it("accepts a code once: the next call needs a new one", async () => {
+    const s = await setup({ totp: verifier(), answer: () => ({ action: "accept", content: { code: good } }) });
+    expect((await s.post()).isError).toBeFalsy();
+    expect((await s.post()).isError).toBe(true);
+    expect(s.posted).toHaveLength(1);
   });
 });

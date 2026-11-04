@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ADTL_EVIDENCE_SCHEMA,
   ADTL_EVIDENCE_TYPE,
   ADTL_LABEL_KEY,
   TRUST_ANNOTATIONS_KEY,
@@ -54,7 +55,7 @@ describe("attachLabel", () => {
     expect(out._meta?.[TRUST_ANNOTATIONS_KEY]).toEqual({
       untrusted: true,
       sensitive: true,
-      evidenceRef: { type: ADTL_EVIDENCE_TYPE, digest: digest(label), canonicalization: "jcs/rfc8785" },
+      evidenceRef: { type: ADTL_EVIDENCE_TYPE, digest: digest(label), canonicalization: "jcs/rfc8785", schema: ADTL_EVIDENCE_SCHEMA },
     });
     expect(out._meta?.[ADTL_LABEL_KEY]).toEqual(label);
   });

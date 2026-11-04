@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.8.1 — experimental
+
+Authenticator-app approvals and OpenFGA authorization, a first outside measurement of what ADTL does and doesn't catch, and fixes for gaps left in 0.8.0.
+
+### Security
+- Updated dependencies with published advisories: `@modelcontextprotocol/sdk` 1.32.2, `nodemailer` 10.3.1, `zod` 4.6.7 (a major version), and the transitive `body-parser`, `fast-uri` and `qs`. `npm audit --omit=dev` is clean.
+
+### Upgrading
+- No config changes are needed. `gateway.approvals.totp` and `gateway.openfga` only apply when you set them.
+- Config error messages come from zod 4, so their wording changed.
+- `evidenceRef` on labeled results now carries `schema`.
+
+### `@adtl/gateway`
+- Authenticator-app approvals ([#25](https://github.com/probita-ai/adtl/issues/25)): `gateway.approvals.totp: true` asks for a 6-digit code in the MCP client instead of Allow or Deny, so a client that accepts prompts by itself can't approve anything. `adtl-gateway totp setup` shows a QR code and stores the secret in the macOS Keychain, or elsewhere in a private file (`ADTL_TOTP_FILE`). A code works once, within one 30-second step either way, even across restarts. `adtl-gateway totp check <code>` tests a code. The hooks protect the secret. New dependency: `qrcode-terminal`.
+- OpenFGA ([#12](https://github.com/probita-ai/adtl/issues/12)): `gateway.openfga` checks each call against OpenFGA's HTTP API, with per-tool objects built from the call's arguments (`object: "repo:{owner}/{repo}"`). Errors and timeouts deny. Works alongside `roles` and `cedar`; every one must allow.
+- The playground applies `gateway.interceptorOverrides` from your config, and refuses bad ones. It still ignores `interceptorServers`, so a web page can't start commands.
+- Interceptors of a type the gateway doesn't run (such as the proposed `sink`) are named in a startup warning instead of being skipped silently.
+
+### `@adtl/labels`
+- `evidenceRef.schema` now names the published [`adtl.label.v1` JSON Schema](docs/schemas/adtl-label.v1.json).
+
+### Docs
+- [`SPEC.md`](SPEC.md) updated for the above.
+- [`docs/interceptor-state-proposal.md`](docs/interceptor-state-proposal.md) ([#22](https://github.com/probita-ai/adtl/issues/22)): the case for interceptor state across calls, a draft for the Interceptors WG.
+
+### Examples
+- [`examples/mcphunt-eval`](examples/mcphunt-eval) ([#37](https://github.com/probita-ai/adtl/issues/37)): replays MCPHunt's 3,615 recorded runs through ADTL's labels and policy. The example policy would have stopped 0.6% of policy-violating leaks, which are mostly copies into local files. Asking on every write stops 95.2% and interrupts 95.7% of clean runs. Follow-up: [#56](https://github.com/probita-ai/adtl/issues/56).
+
 ## 0.8.0 — experimental
 
 Labels follow data across more hops: into sub-agents, over A2A, and to and from FIDES / fides-gateway. The gateway catches up with the latest SEP-2624 and Tool Annotations IG drafts: per-interceptor overrides, interceptors from several servers, and tools that describe themselves with action-metadata.

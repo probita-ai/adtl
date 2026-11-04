@@ -91,9 +91,15 @@ v0.7 runs the exfiltration attack against [GitHub's real MCP server](examples/gi
 
 v0.8 carries labels across hops: sub-agents share their parent's label (`SubagentStart` hook in Claude Code, `ADTL_SESSION_ID` elsewhere), a [draft A2A extension](docs/a2a-trust-labels-v1.md) signs labels onto agent-to-agent messages, and labels map to and from [FIDES](packages/gateway#fides-and-fides-gateway) and fides-gateway. It also follows the latest drafts: [per-interceptor overrides](packages/gateway#interceptor-overrides) and [more interceptor servers](packages/gateway#more-interceptor-servers) from SEP-2624, and tools that describe themselves with [action-metadata](packages/gateway#tools-that-describe-themselves-action-metadata). Record labels survive memory servers whose updates replace metadata (`recordIds`).
 
+v0.8.1 adds [authenticator-app approvals](packages/gateway#approving-with-an-authenticator-app) and [OpenFGA](packages/gateway#openfga) for relationship rules.
+
+## What it doesn't catch
+
+Replaying [MCPHunt](examples/mcphunt-eval)'s 3,615 recorded agent runs, ADTL's example policy would have stopped **0.6%** of the policy-violating credential leaks. Those leaks are mostly secrets copied into local files, which that policy allows: it's about data leaving, and a session label can't tell a leaking write from a normal one. Asking on every write stops 95.2% of them but interrupts 95.7% of clean runs. A replay isn't a live test, and the benchmark doesn't cover injected instructions, which is what ADTL's demos stop. See [the write-up](examples/mcphunt-eval).
+
 Planned next:
 
-- **Later:** an OpenFGA adapter for relationship-based authorization
+- **Copied values:** ask when a call copies a value from private data ([#56](https://github.com/probita-ai/adtl/issues/56)), which stopped 79.2% in a prototype, with 44.7% of clean runs interrupted
 
 Help is very welcome: see the [open issues](https://github.com/probita-ai/adtl/issues), especially the ones marked [help wanted](https://github.com/probita-ai/adtl/labels/help%20wanted).
 

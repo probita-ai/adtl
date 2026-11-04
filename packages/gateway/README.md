@@ -145,6 +145,7 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress`, `t
 | `gateway.principal` | Who runs this gateway: `{ id, type?, claims? }`. `${VAR}` works in `id`. Default: anonymous. See [Authorization](#authorization). |
 | `gateway.roles` | Who may use which tools, prompts and resources. Deny by default once present. See [Authorization](#authorization). |
 | `gateway.cedar` | Cedar policies for attribute-based rules: `{ policies, entities?, timeZone? }`. See [Cedar policies](#cedar-policies). |
+| `gateway.openfga` | OpenFGA checks for relationship rules: `{ url, storeId, modelId?, token?, relation?, timeoutMs?, tools? }`. See [OpenFGA](#openfga). |
 
 #### More interceptor servers
 
@@ -252,6 +253,27 @@ gateway:
 - If ntfy is configured too, both are asked and the first answer wins. Clients without elicitation support are simply not asked.
 - It's off by default because a client that accepts elicitations by itself, without a person, would approve calls. Turn it on only for clients that always show the prompt to you.
 - It's never used for rules with named approvers: the client can't say who answered.
+
+#### Approving with an authenticator app
+
+For a stronger answer than a click, ask for a 6-digit code from an authenticator app (Google Authenticator, 1Password, ...). Codes are made offline on your phone, and a client that accepts prompts by itself can't produce one.
+
+```sh
+adtl-gateway totp setup          # shows a QR code to scan; --force replaces an existing secret
+adtl-gateway totp check 123456   # does this code match right now? (doesn't use it up)
+```
+
+```yaml
+gateway:
+  approvals:
+    totp: true            # wins over elicitation: true
+```
+
+- The prompt appears in the client, as with elicitation, and asks for the code. The model never sees the prompt or the code. Three wrong codes, declining or no answer stops the call.
+- A code works for the one pending call, once, within one 30-second step either way. The last used step is kept next to the secret, so a code can't be replayed after a restart.
+- The secret is kept in the macOS Keychain, or elsewhere in a file only you can read (`ADTL_TOTP_FILE`, default `~/.adtl/totp-secret`). The gateway won't start with `totp: true` and no secret.
+- Clients without elicitation support aren't asked: other configured channels still work, and with none the call is blocked. It's never used for rules with named approvers.
+- An agent with shell access as the same user may still be able to read the secret. The hooks refuse writes to these files and ask before commands that mention them, but that's a speed bump. To rule it out, run the gateway on another machine.
 
 #### Who may approve
 
@@ -492,6 +514,33 @@ Each call becomes a Cedar request:
 - Arguments are passed without nulls, with fractions as strings. Objects with `__entity` or `__extn` are passed as JSON strings, so a tool argument can't name an entity.
 - With `roles` set too, both must allow. A policy file that doesn't parse stops the gateway at startup; an evaluation error denies the call.
 
+#### OpenFGA
+
+For relationship rules such as "bob can comment on repos in org acme", point the gateway at an [OpenFGA](https://openfga.dev/) server (or Auth0 FGA). It needs no extra package.
+
+```yaml
+gateway:
+  principal: { id: "${USER}" }
+  openfga:
+    url: http://localhost:8080
+    storeId: "${FGA_STORE_ID}"
+    modelId: "${FGA_MODEL_ID}"      # optional: pin an authorization model
+    token: "${FGA_TOKEN}"           # optional: bearer token
+    relation: can_use               # optional: the default relation
+    tools:                          # optional: per-resource rules, from the call's arguments
+      github.add_issue_comment: { relation: can_comment, object: "repo:{owner}/{repo}" }
+```
+
+Each call becomes one OpenFGA check:
+
+| | Value |
+|---|---|
+| user | `user:<id>`, `service:<id>`, or `user:anonymous` |
+| relation | the tool's rule, else `relation` |
+| object | the tool's rule, else `tool:<server>.<tool>`, `prompt:<server>.<name>` or `resource:<uri>` |
+
+Ids are percent-encoded, since OpenFGA ids can't hold `:`, `#`, `@` or spaces, so `{owner}/{repo}` is stored as `repo:acme%2Fwebsite`; write your tuples the same way. A missing or non-scalar `{argument}` denies the call. Tool lists have no arguments, so tools whose object needs them stay listed and are checked when called. If OpenFGA errors or can't be reached within `timeoutMs` (2000 by default), the call is denied. With `roles` or `cedar` as well, every one must allow.
+
 #### Your own authorizer
 
 Or your own `Authorizer` in code:
@@ -523,10 +572,12 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 
 - Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
 - Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
-- Approvals come from ntfy, email notices and, with `elicitation: true`, the MCP client. Authenticator-app codes (TOTP) are planned.
-- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.8). Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
+- Approvals come from ntfy, email notices and, through the MCP client, a prompt (`elicitation: true`) or an authenticator code (`totp: true`).
+- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, and [sub-agents](#sub-agents) share their parent's label, but the gateway doesn't sign or read [A2A](../../docs/a2a-trust-labels-v1.md) messages itself yet. Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
 - The Claude Code hooks label tools by name, not by what they touched: a `Read` of a downloaded file is as trusted as a `Read` of your own code.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.
+- [action-metadata](#tools-that-describe-themselves-action-metadata) needs the tool's annotations from `tools/list`, so it applies to tools behind the gateway. MCP tools that only the Claude Code hooks see are checked without it: `requiresReview` and `tool.outcome` have no effect on them.
+- The playground takes `gateway.interceptorOverrides` from your config but no other `gateway:` setting, and never `interceptorServers`, so a web page can't start commands.
 
 ## Links
 

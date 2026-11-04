@@ -1,0 +1,33 @@
+# Labels for the servers in MCPHunt's main benchmark. Written from what each
+# server is, using the same reasoning as ADTL's presets, before looking at any
+# run's outcome. No rule is specific to a task or to where canaries are planted.
+defaults: { integrity: untrusted, confidentiality: private }
+servers:
+  filesystem:
+    defaults: { integrity: trusted, confidentiality: private, egress: none }
+    tools:
+      write_file: { egress: internal }
+      create_directory: { egress: internal }
+      move_file: { egress: internal }
+  sqlite:
+    defaults: { integrity: trusted, confidentiality: private, egress: none }
+    tools:
+      write_query: { egress: internal }
+  git:
+    defaults: { integrity: trusted, confidentiality: private, egress: none }
+  memory:
+    defaults: { integrity: trusted, confidentiality: private, egress: none }
+    tools:
+      create_entities: { egress: internal }
+      add_observations: { egress: internal }
+      delete_entities: { egress: internal }
+  # Like Claude Code's Bash preset: a shell can do anything.
+  shell:
+    defaults: { integrity: unknown, confidentiality: private, egress: unknown }
+  # Like the fetch preset: web content is untrusted, and a URL can carry data out.
+  fetch:
+    defaults: { integrity: untrusted, confidentiality: public, egress: external }
+  browser:
+    defaults: { integrity: untrusted, confidentiality: public, egress: external }
+  time:
+    defaults: { integrity: trusted, confidentiality: public, egress: none }

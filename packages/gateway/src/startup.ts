@@ -28,7 +28,9 @@ import {
 } from "./config.js";
 import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
-import { InterceptorInvoker, checkOverrides, duplicateInterceptors, mutatorsAfter } from "./invoker.js";
+import { InterceptorInvoker, checkOverrides, duplicateInterceptors, mutatorsAfter, unsupportedInterceptors } from "./invoker.js";
+import { OpenFgaAuthorizer } from "./openfga.js";
+import { loadTotpVerifier } from "./totp.js";
 import { NtfyNotifier } from "./ntfy.js";
 import { RoleAuthorizer } from "./roles.js";
 
@@ -124,12 +126,13 @@ export function createApprovals(cfg: GatewayConfig, env: NodeJS.ProcessEnv, log:
   const approverChannels = new Map<string, Notifier[]>(
     Object.entries(a.approvers ?? {}).map(([id, c]) => [id, [new NtfyNotifier({ ...c.ntfy, name: `ntfy:${id}` })]]),
   );
-  if (notifiers.length === 0 && approverChannels.size === 0 && !a.elicitation) return undefined;
-  if (!notifiers.some((n) => n.listen) && approverChannels.size === 0 && !a.elicitation) {
+  if (notifiers.length === 0 && approverChannels.size === 0 && !a.elicitation && !a.totp) return undefined;
+  if (!notifiers.some((n) => n.listen) && approverChannels.size === 0 && !a.elicitation && !a.totp) {
     log.warn('no approval channel can carry answers (configure gateway.approvals.ntfy); "ask" still blocks');
   }
   const approvers = approverChannels.size ? `; approvers: ${[...approverChannels.keys()].join(", ")}` : "";
-  const shared = [...notifiers.map((n) => n.name), ...(a.elicitation ? ["elicitation (if the client supports it)"] : [])];
+  const inClient = a.totp ? ["authenticator code (if the client supports elicitation)"] : a.elicitation ? ["elicitation (if the client supports it)"] : [];
+  const shared = [...notifiers.map((n) => n.name), ...inClient];
   log.info(`approvals: ${shared.join(", ") || "none shared"}${approvers} (timeout ${a.timeoutSeconds}s)`);
   return new ApprovalBroker({ notifiers, approverChannels, timeoutMs: a.timeoutSeconds * 1000, log });
 }
@@ -175,7 +178,7 @@ export function gatewayPrincipal(cfg: GatewayConfig, env: NodeJS.ProcessEnv): Pr
  * The configured authorizers, in the order they are asked: roles, then cedar.
  * Cedar files are read and parsed here, so a bad policy fails startup.
  */
-export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string): Promise<Authorizer[]> {
+export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string, env: NodeJS.ProcessEnv = process.env): Promise<Authorizer[]> {
   const out: Authorizer[] = [];
   if (cfg.roles) out.push(new RoleAuthorizer(cfg.roles));
   if (cfg.cedar) {
@@ -184,6 +187,19 @@ export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string): P
     } catch (err) {
       throw new GatewayConfigError((err as Error).message);
     }
+  }
+  if (cfg.openfga) {
+    const f = cfg.openfga;
+    const expand = (v: string, key: string) => expandEnv(v, env, `gateway.openfga.${key}`);
+    out.push(
+      new OpenFgaAuthorizer({
+        ...f,
+        url: expand(f.url, "url"),
+        storeId: expand(f.storeId, "storeId"),
+        ...(f.modelId !== undefined ? { modelId: expand(f.modelId, "modelId") } : {}),
+        ...(f.token !== undefined ? { token: expand(f.token, "token") } : {}),
+      }),
+    );
   }
   return out;
 }
@@ -222,7 +238,7 @@ export async function startGateway(
   // Config problems that need no process: fail before starting any.
   const approverMembers = approverRoles(loaded.labels, loaded.gateway);
   const baseDir = dirname(loaded.path);
-  const authorizers = await gatewayAuthorizers(loaded.gateway, baseDir);
+  const authorizers = await gatewayAuthorizers(loaded.gateway, baseDir, env);
   const log = opts.logger ?? { info: (m: string) => console.error(`[adtl-gateway] ${m}`), warn: (m: string) => console.error(`[adtl-gateway] warning: ${m}`) };
   const clients: Client[] = [];
   const closeAll = () => Promise.allSettled(clients.map((c) => c.close())).then(() => undefined);
@@ -278,6 +294,8 @@ export async function startGateway(
     const overrides = loaded.gateway.interceptorOverrides;
     const problems = checkOverrides(bound.map((b) => b.definition), overrides);
     if (problems.length) throw new GatewayConfigError(`gateway.interceptorOverrides: ${problems.join("; ")}`);
+    const unsupported = unsupportedInterceptors(bound);
+    if (unsupported.length) log.warn(`not running interceptors of an unknown type: ${unsupported.join(", ")}`);
     const late = mutatorsAfter(bound, LABEL_INTERCEPTOR, overrides);
     if (late.length) {
       log.warn(`${late.join(", ")} run after ${LABEL_INTERCEPTOR} and could change or drop its label; give them a lower priorityHint`);
@@ -324,11 +342,14 @@ export async function startGateway(
       if (!principal) log.warn('roles are set but gateway.principal is not: only roles with members ["*"] apply');
     }
     for (const a of authorizers) if (a.name !== "roles") log.info(`authorizer: ${a.name}`);
+    const totp = loaded.gateway.approvals?.totp ? loadTotpVerifier(env) : undefined;
+    if (loaded.gateway.approvals?.totp && !totp) throw new GatewayConfigError("gateway.approvals.totp is on, but no secret is set up: run adtl-gateway totp setup");
     const agent = gatewayAgent(env);
     if (agent) log.info(`agent: ${agent.id}${agent.type ? ` (${agent.type})` : ""}`);
     const gateway = new AdtlGateway({
       ...(shared ? { sessionId: shared.sessionId } : {}),
       ...(agent ? { agent } : {}),
+      ...(totp ? { totp } : {}),
       upstreams,
       invoker,
       ...(auditLog ? { audit: auditLog } : {}),

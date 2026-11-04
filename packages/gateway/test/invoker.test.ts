@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { InterceptorDefinition } from "@adtl/interceptors";
-import { InterceptorInvoker, checkOverrides } from "../src/index.js";
+import { InterceptorInvoker, checkOverrides, unsupportedInterceptors } from "../src/index.js";
 
 /** A fake interceptor server whose validators return fixed decisions. */
 function validator(name: string, decision: "allow" | "ask" | "block"): { client: Client; definition: InterceptorDefinition } {
@@ -88,5 +88,12 @@ describe("InterceptorInvoker with several servers", () => {
     await run(new InterceptorInvoker([{ client, definition: def("ours") }, { client, definition: def("theirs"), sendConfig: false }]));
     expect(seen.find((p) => p.name === "ours")).toHaveProperty("config", { server: "s" });
     expect(seen.find((p) => p.name === "theirs")).not.toHaveProperty("config");
+  });
+});
+
+describe("unsupportedInterceptors", () => {
+  it("names interceptors of a type the invoker never runs", () => {
+    const sink = { client: {} as Client, definition: { name: "avatar-mood", type: "sink", hooks: [] } as unknown as InterceptorDefinition };
+    expect(unsupportedInterceptors([validator("v", "allow"), sink])).toEqual(["avatar-mood (sink)"]);
   });
 });
