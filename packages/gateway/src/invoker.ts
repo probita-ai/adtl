@@ -160,6 +160,13 @@ export function checkOverrides(defs: InterceptorDefinition[], overrides: Record<
   return problems;
 }
 
+/** Interceptors of a type this invoker doesn't run (e.g. the proposed `sink`). They are never invoked. */
+export function unsupportedInterceptors(bound: BoundInterceptor[]): string[] {
+  return bound
+    .filter((b) => b.definition.type !== "validation" && b.definition.type !== "mutation")
+    .map((b) => `${b.definition.name} (${String(b.definition.type)})`);
+}
+
 /** Interceptor names offered by more than one server: each must be invoked on its own server, so names must be unique. */
 export function duplicateInterceptors(bound: BoundInterceptor[]): string[] {
   const servers = new Map<string, string[]>();

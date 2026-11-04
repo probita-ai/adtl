@@ -524,9 +524,11 @@ The gateway fails closed. If an interceptor errors or times out, the call is sto
 - Tools, resources and prompts are proxied. Resource subscriptions, `list_changed` notifications and completions are not passed through yet.
 - Resources and prompts are labeled by server defaults (`servers.<id>.defaults`) or the global defaults; there are no per-resource or per-prompt rules yet. A resource URI that two upstreams could serve is refused rather than guessed.
 - Approvals come from ntfy, email notices and, with `elicitation: true`, the MCP client. Authenticator-app codes (TOTP) are planned.
-- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, but not across machines or other agents yet (v0.8). Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
+- Session labels last for one agent session: one gateway process, or under Claude Code one Claude Code session (shared with the hooks). The [label ledger](#label-ledger) carries them into files, memory servers and sub-agents by content, and [sub-agents](#sub-agents) share their parent's label, but the gateway doesn't sign or read [A2A](../../docs/a2a-trust-labels-v1.md) messages itself yet. Memory servers that extract facts or merge records on write return text the ledger cannot recognize; use [labels on records](#labels-on-records), or a strict rule for servers that don't keep metadata.
 - The Claude Code hooks label tools by name, not by what they touched: a `Read` of a downloaded file is as trusted as a `Read` of your own code.
 - Labels are set by your config. Servers' own trust claims can only make labels stricter, unless you set `acceptServerClaims: true`.
+- [action-metadata](#tools-that-describe-themselves-action-metadata) needs the tool's annotations from `tools/list`, so it applies to tools behind the gateway. MCP tools that only the Claude Code hooks see are checked without it: `requiresReview` and `tool.outcome` have no effect on them.
+- The playground takes `gateway.interceptorOverrides` from your config but no other `gateway:` setting, and never `interceptorServers`, so a web page can't start commands.
 
 ## Links
 

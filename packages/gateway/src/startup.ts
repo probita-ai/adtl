@@ -28,7 +28,7 @@ import {
 } from "./config.js";
 import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
-import { InterceptorInvoker, checkOverrides, duplicateInterceptors, mutatorsAfter } from "./invoker.js";
+import { InterceptorInvoker, checkOverrides, duplicateInterceptors, mutatorsAfter, unsupportedInterceptors } from "./invoker.js";
 import { NtfyNotifier } from "./ntfy.js";
 import { RoleAuthorizer } from "./roles.js";
 
@@ -278,6 +278,8 @@ export async function startGateway(
     const overrides = loaded.gateway.interceptorOverrides;
     const problems = checkOverrides(bound.map((b) => b.definition), overrides);
     if (problems.length) throw new GatewayConfigError(`gateway.interceptorOverrides: ${problems.join("; ")}`);
+    const unsupported = unsupportedInterceptors(bound);
+    if (unsupported.length) log.warn(`not running interceptors of an unknown type: ${unsupported.join(", ")}`);
     const late = mutatorsAfter(bound, LABEL_INTERCEPTOR, overrides);
     if (late.length) {
       log.warn(`${late.join(", ")} run after ${LABEL_INTERCEPTOR} and could change or drop its label; give them a lower priorityHint`);
