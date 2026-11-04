@@ -45,7 +45,8 @@ A result as ADTL emits it today:
       "evidenceRef": {
         "type": "adtl.label.v1",
         "digest": "sha256:…",
-        "canonicalization": "jcs/rfc8785"
+        "canonicalization": "jcs/rfc8785",
+        "schema": "https://github.com/probita-ai/adtl/blob/main/docs/schemas/adtl-label.v1.json"
       }
     },
     "adtl/label": {
@@ -60,7 +61,7 @@ A result as ADTL emits it today:
 }
 ```
 
-The record also travels inline under ADTL's own `_meta` key, `adtl/label`. ADTL does not yet emit the recommended `schema` field; the scheme PR would add it.
+The record also travels inline under ADTL's own `_meta` key, `adtl/label`. `schema` names the record's [JSON Schema](docs/schemas/adtl-label.v1.json).
 
 ### Label payload
 
@@ -117,7 +118,7 @@ This scheme is close to FIDES but does not fit inside it, so it is proposed as a
 | Provenance | none in the record | `origins` |
 | Absent label | host's default policy | host's rule for that tool, else restrictive |
 
-A host can map an `adtl.label.v1` label down to FIDES: `unknown` becomes `untrusted` and `secret` becomes `private`. A FIDES label maps into this scheme without loss, apart from reader-set resolution.
+A host can map an `adtl.label.v1` label down to FIDES: `unknown` becomes `untrusted` and `secret` becomes `private`. A FIDES label maps into this scheme without loss, apart from reader-set resolution. ADTL does this mapping in both directions: it [reads and can emit](packages/gateway#fides-and-fides-gateway) fides-gateway's labels, and builds `ifc.fides.v1` records.
 
 ## Graceful degradation
 
@@ -127,7 +128,7 @@ A host can map an `adtl.label.v1` label down to FIDES: `unknown` becomes `untrus
 
 ## Reference implementation
 
-All in [probita-ai/adtl](https://github.com/probita-ai/adtl) (TypeScript, Apache-2.0), v0.7.0:
+All in [probita-ai/adtl](https://github.com/probita-ai/adtl) (TypeScript, Apache-2.0), v0.8.1:
 
 - **Codec**: `attachLabel` and `readClaims` in [`@adtl/labels`](packages/labels/src/trustAnnotations.ts).
 - **Producer**: the `adtl.label` interceptor, a [SEP-2624](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2624) mutator in [`@adtl/interceptors`](packages/interceptors).
@@ -148,3 +149,4 @@ Feedback is welcome in the Tool Annotations IG Discord channel or as an [issue](
 | Date | Change |
 | --- | --- |
 | 2026-10-30 | First draft |
+| 2026-11-04 | ADTL emits `evidenceRef.schema`; record schema published; v0.8.1 reference |

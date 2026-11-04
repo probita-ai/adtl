@@ -27,6 +27,9 @@ export const ADTL_LABEL_KEY = "adtl/label";
 /** `evidenceRef.type` for an ADTL label record. */
 export const ADTL_EVIDENCE_TYPE = "adtl.label.v1";
 
+/** `evidenceRef.schema`: the JSON Schema of an `adtl.label.v1` record. */
+export const ADTL_EVIDENCE_SCHEMA = "https://github.com/probita-ai/adtl/blob/main/docs/schemas/adtl-label.v1.json";
+
 export interface EvidenceRef {
   type: string;
   digest: string;
@@ -116,6 +119,7 @@ export function labelToAnnotations(label: Label): TrustAnnotations {
       type: ADTL_EVIDENCE_TYPE,
       digest: digest(label),
       canonicalization: "jcs/rfc8785",
+      schema: ADTL_EVIDENCE_SCHEMA,
     },
   };
 }

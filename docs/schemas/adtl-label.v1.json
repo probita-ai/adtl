@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/probita-ai/adtl/blob/main/docs/schemas/adtl-label.v1.json",
+  "title": "adtl.label.v1",
+  "description": "The record an evidenceRef of type adtl.label.v1 points at. See SPEC.md.",
+  "type": "object",
+  "required": ["integrity", "confidentiality", "origins"],
+  "additionalProperties": false,
+  "properties": {
+    "integrity": { "enum": ["untrusted", "unknown", "trusted"] },
+    "confidentiality": { "enum": ["public", "private", "secret"] },
+    "origins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["server"],
+        "additionalProperties": false,
+        "properties": {
+          "server": { "type": "string" },
+          "tool": { "type": "string" },
+          "resource": { "type": "string" },
+          "prompt": { "type": "string" }
+        }
+      }
+    }
+  }
+}
