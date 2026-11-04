@@ -29,6 +29,7 @@ import {
 import { EmailNotifier } from "./email.js";
 import { AdtlGateway, GATEWAY_VERSION, type GatewayLogger } from "./gateway.js";
 import { InterceptorInvoker, checkOverrides, duplicateInterceptors, mutatorsAfter, unsupportedInterceptors } from "./invoker.js";
+import { OpenFgaAuthorizer } from "./openfga.js";
 import { NtfyNotifier } from "./ntfy.js";
 import { RoleAuthorizer } from "./roles.js";
 
@@ -175,7 +176,7 @@ export function gatewayPrincipal(cfg: GatewayConfig, env: NodeJS.ProcessEnv): Pr
  * The configured authorizers, in the order they are asked: roles, then cedar.
  * Cedar files are read and parsed here, so a bad policy fails startup.
  */
-export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string): Promise<Authorizer[]> {
+export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string, env: NodeJS.ProcessEnv = process.env): Promise<Authorizer[]> {
   const out: Authorizer[] = [];
   if (cfg.roles) out.push(new RoleAuthorizer(cfg.roles));
   if (cfg.cedar) {
@@ -184,6 +185,19 @@ export async function gatewayAuthorizers(cfg: GatewayConfig, baseDir: string): P
     } catch (err) {
       throw new GatewayConfigError((err as Error).message);
     }
+  }
+  if (cfg.openfga) {
+    const f = cfg.openfga;
+    const expand = (v: string, key: string) => expandEnv(v, env, `gateway.openfga.${key}`);
+    out.push(
+      new OpenFgaAuthorizer({
+        ...f,
+        url: expand(f.url, "url"),
+        storeId: expand(f.storeId, "storeId"),
+        ...(f.modelId !== undefined ? { modelId: expand(f.modelId, "modelId") } : {}),
+        ...(f.token !== undefined ? { token: expand(f.token, "token") } : {}),
+      }),
+    );
   }
   return out;
 }
@@ -222,7 +236,7 @@ export async function startGateway(
   // Config problems that need no process: fail before starting any.
   const approverMembers = approverRoles(loaded.labels, loaded.gateway);
   const baseDir = dirname(loaded.path);
-  const authorizers = await gatewayAuthorizers(loaded.gateway, baseDir);
+  const authorizers = await gatewayAuthorizers(loaded.gateway, baseDir, env);
   const log = opts.logger ?? { info: (m: string) => console.error(`[adtl-gateway] ${m}`), warn: (m: string) => console.error(`[adtl-gateway] warning: ${m}`) };
   const clients: Client[] = [];
   const closeAll = () => Promise.allSettled(clients.map((c) => c.close())).then(() => undefined);

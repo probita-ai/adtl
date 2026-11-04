@@ -145,6 +145,7 @@ Rules match on `session.integrity`, `session.confidentiality`, `tool.egress`, `t
 | `gateway.principal` | Who runs this gateway: `{ id, type?, claims? }`. `${VAR}` works in `id`. Default: anonymous. See [Authorization](#authorization). |
 | `gateway.roles` | Who may use which tools, prompts and resources. Deny by default once present. See [Authorization](#authorization). |
 | `gateway.cedar` | Cedar policies for attribute-based rules: `{ policies, entities?, timeZone? }`. See [Cedar policies](#cedar-policies). |
+| `gateway.openfga` | OpenFGA checks for relationship rules: `{ url, storeId, modelId?, token?, relation?, timeoutMs?, tools? }`. See [OpenFGA](#openfga). |
 
 #### More interceptor servers
 
@@ -491,6 +492,33 @@ Each call becomes a Cedar request:
 - Lists are checked with `listing: true` and no `arguments`. Start a policy that reads arguments with `context.listing ||`, or the tool is hidden from lists (calls are still checked with arguments).
 - Arguments are passed without nulls, with fractions as strings. Objects with `__entity` or `__extn` are passed as JSON strings, so a tool argument can't name an entity.
 - With `roles` set too, both must allow. A policy file that doesn't parse stops the gateway at startup; an evaluation error denies the call.
+
+#### OpenFGA
+
+For relationship rules such as "bob can comment on repos in org acme", point the gateway at an [OpenFGA](https://openfga.dev/) server (or Auth0 FGA). It needs no extra package.
+
+```yaml
+gateway:
+  principal: { id: "${USER}" }
+  openfga:
+    url: http://localhost:8080
+    storeId: "${FGA_STORE_ID}"
+    modelId: "${FGA_MODEL_ID}"      # optional: pin an authorization model
+    token: "${FGA_TOKEN}"           # optional: bearer token
+    relation: can_use               # optional: the default relation
+    tools:                          # optional: per-resource rules, from the call's arguments
+      github.add_issue_comment: { relation: can_comment, object: "repo:{owner}/{repo}" }
+```
+
+Each call becomes one OpenFGA check:
+
+| | Value |
+|---|---|
+| user | `user:<id>`, `service:<id>`, or `user:anonymous` |
+| relation | the tool's rule, else `relation` |
+| object | the tool's rule, else `tool:<server>.<tool>`, `prompt:<server>.<name>` or `resource:<uri>` |
+
+Ids are percent-encoded, since OpenFGA ids can't hold `:`, `#`, `@` or spaces, so `{owner}/{repo}` is stored as `repo:acme%2Fwebsite`; write your tuples the same way. A missing or non-scalar `{argument}` denies the call. Tool lists have no arguments, so tools whose object needs them stay listed and are checked when called. If OpenFGA errors or can't be reached within `timeoutMs` (2000 by default), the call is denied. With `roles` or `cedar` as well, every one must allow.
 
 #### Your own authorizer
 

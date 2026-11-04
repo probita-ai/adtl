@@ -21,6 +21,7 @@
  *       maintainers: { members: [alice], tools: ["github.*"] }
  *       readers:     { members: ["*"],   tools: ["github.read_*", "github.get_*"] }
  *     cedar: { policies: ./adtl.cedar }  # optional: attribute-based rules (see cedar.ts)
+ *     openfga: { url: http://localhost:8080, storeId: "${FGA_STORE_ID}" }  # optional: relationship rules (see openfga.ts)
  *     approvals:                         # optional: make "ask" really ask
  *       timeoutSeconds: 50
  *       ntfy: { topic: "${ADTL_NTFY_TOPIC}" }
@@ -31,7 +32,7 @@
  *         from: adtl@example.com
  *         to: you@example.com
  *
- * `${VAR}` in command, args, env, cwd, url, headers, approval settings and principal.id is
+ * `${VAR}` in command, args, env, cwd, url, headers, approval settings, openfga settings and principal.id is
  * replaced from the gateway's environment. A missing variable is a config error,
  * unless a default is given: `${VAR:-default}`.
  */
@@ -166,6 +167,30 @@ export const CedarConfigSchema = z
   .strict();
 export type CedarConfig = z.infer<typeof CedarConfigSchema>;
 
+export const OpenFgaConfigSchema = z
+  .object({
+    url: z.string().min(1),
+    storeId: z.string().min(1),
+    modelId: z.string().min(1).optional(),
+    token: z.string().min(1).optional(),
+    /** Relation checked when a tool has no rule of its own. */
+    relation: z.string().min(1).default("can_use"),
+    timeoutMs: z.number().int().positive().max(60_000).default(2000),
+    /** Per-tool rules, keyed `server.tool`. `object` is `type:id`, and `{argument}` is taken from the call. */
+    tools: z
+      .record(
+        z
+          .object({
+            relation: z.string().min(1).optional(),
+            object: z.string().regex(/^[^:\s]+:.+$/, 'Use "type:id", e.g. "repo:{owner}/{repo}"').optional(),
+          })
+          .strict(),
+      )
+      .default({}),
+  })
+  .strict();
+export type OpenFgaConfig = z.infer<typeof OpenFgaConfigSchema>;
+
 const PhaseSchema = z.enum(["request", "response"]);
 
 /** SEP-2624 InterceptorOverrides, set by the gateway owner for one interceptor. */
@@ -223,6 +248,8 @@ export const GatewayConfigSchema = z
       .optional(),
     /** Cedar authorization. With roles as well, both must allow. */
     cedar: CedarConfigSchema.optional(),
+    /** OpenFGA authorization. With roles or cedar as well, all must allow. */
+    openfga: OpenFgaConfigSchema.optional(),
   })
   .strict();
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
