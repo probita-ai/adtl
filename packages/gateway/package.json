@@ -1,6 +1,6 @@
 {
   "name": "@adtl/gateway",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Experimental: MCP gateway that labels every tool result and blocks risky tool calls using ADTL trust labels",
   "keywords": [
     "mcp",
@@ -47,9 +47,9 @@
     "url": "https://github.com/probita-ai/adtl/issues"
   },
   "dependencies": {
-    "@adtl/interceptors": "0.8.0",
-    "@adtl/labels": "0.8.0",
-    "@adtl/ledger": "0.8.0",
+    "@adtl/interceptors": "0.8.1",
+    "@adtl/labels": "0.8.1",
+    "@adtl/ledger": "0.8.1",
     "@modelcontextprotocol/sdk": "1.31.0",
     "nodemailer": "10.0.12",
     "qrcode-terminal": "0.12.0",
