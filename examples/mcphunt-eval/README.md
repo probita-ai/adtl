@@ -1,6 +1,6 @@
 # ADTL against MCPHunt: a trace replay
 
-**Result: ADTL's example policy would have stopped 0.6% of MCPHunt's policy-violating leaks. With [`call.copiesPrivate`](../../packages/gateway/README.md#copied-private-values), added in 0.9.0, it stops 78.0%, interrupting 12.7% of clean runs.** Session labels alone don't catch this kind of leak, and this page says why, and what does.
+**Result: ADTL's example policy would have stopped 0.6% of MCPHunt's policy-violating leaks. With [`call.copiesPrivate`](../../packages/gateway/README.md#copied-private-values), added in 0.8.2, it stops 78.0%, interrupting 12.7% of clean runs.** Session labels alone don't catch this kind of leak, and this page says why, and what does.
 
 [MCPHunt](https://arxiv.org/abs/2604.27819) measures how credentials spread across multi-server MCP agents. It plants canary secrets, and it separates leaks a task required from leaks that broke policy. Its [traces](https://huggingface.co/datasets/lihaonan0716/mcphunt-agent-traces) are public (CC BY 4.0).
 
