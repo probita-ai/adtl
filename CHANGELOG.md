@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0 — experimental
+## 0.8.2 — experimental
 
 Ask when a call copies a private value. Session labels can't tell a leaking write from a normal one, because nearly every session is already private; copied values can.
 

@@ -93,7 +93,7 @@ v0.8 carries labels across hops: sub-agents share their parent's label (`Subagen
 
 v0.8.1 adds [authenticator-app approvals](packages/gateway#approving-with-an-authenticator-app) and [OpenFGA](packages/gateway#openfga) for relationship rules.
 
-v0.9 can ask when a call [copies a private value](packages/gateway#copied-private-values): a token read from `.env` pasted into a report or a script. On MCPHunt's traces that stops 78.0% of credential leaks while interrupting 12.7% of clean runs, where asking before every write stops 95.2% and interrupts 95.7%.
+v0.8.2 can ask when a call [copies a private value](packages/gateway#copied-private-values): a token read from `.env` pasted into a report or a script. On MCPHunt's traces that stops 78.0% of credential leaks while interrupting 12.7% of clean runs, where asking before every write stops 95.2% and interrupts 95.7%.
 
 ## What it doesn't catch
 
