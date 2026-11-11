@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Security
+- Updated the test tooling with published advisories: `vitest` 5.1.0 (from 2.1.9, which pulled in vulnerable `vite`, `esbuild`, `tinypool` and `@vitest/mocker`), now with `vite` 8.3.7 as an explicit dev dependency, and `@types/node` 22.20.5. Dev-only; the published packages don't change. `npm audit` is clean, including dev dependencies.
+
 ## 0.8.1 — experimental
 
 Authenticator-app approvals and OpenFGA authorization, a first outside measurement of what ADTL does and doesn't catch, and fixes for gaps left in 0.8.0.
