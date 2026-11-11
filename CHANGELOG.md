@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — experimental
+
+Ask when a call copies a private value. Session labels can't tell a leaking write from a normal one, because nearly every session is already private; copied values can.
+
+### Upgrading
+- No config changes are needed. `call.copiesPrivate` only applies to rules that use it.
+- Session directories gain a `<session>.values` file next to each label file: hashes of secret-like values the session read from private sources, never the values.
+- `SessionStore` has two new optional methods, `rememberPrivateValues` and `hasPrivateValue`. A custom store without them still works, but rules using `call.copiesPrivate` then match every call (they fail closed).
+
+### `@adtl/labels`
+- `call.copiesPrivate` policy condition ([#56](https://github.com/probita-ai/adtl/issues/56)): matches a call whose arguments hold a secret-like value the session read from a `private` or `secret` result. Secret-like means 16 or more letters, digits, `_`, `-` or `+` in a row, with both letters and digits, not plain hex (git commit ids, hashes, UUIDs) and not a folder name in a path. Only verbatim copies match.
+- `secretFingerprints`, `secretLikeTokens`, `isSecretLike` and `usesCopiesPrivate`. `InMemorySessionStore` and `FileSessionStore` keep the fingerprints.
+- A `data-class.v1` `evidenceRef` is read through its `sensitive` claim; the record itself is ignored until the scheme says where it lives ([#54](https://github.com/probita-ai/adtl/issues/54)).
+
+### `@adtl/interceptors` and `@adtl/gateway`
+- `adtl.label` remembers secret-like values from private results; `adtl.policy` checks each call's arguments against them. The Claude Code hooks do the same, and check a sub-agent's values with its parent's.
+
+### Evaluation
+- The MCPHunt replay (`examples/mcphunt-eval`) now runs the real condition: with the example policy it stops 78.0% of leaks while interrupting 12.7% of clean runs (0.3 asks per clean run). The 0.8.1 prototype stopped 79.2% and interrupted 44.7%; asking before every write stops 95.2% and interrupts 95.7%. `browser_to_local` leaks are still mostly missed, because web pages are labeled `public`.
 
 ### Security
 - Updated the test tooling with published advisories: `vitest` 5.1.0 (from 2.1.9, which pulled in vulnerable `vite`, `esbuild`, `tinypool` and `@vitest/mocker`), now with `vite` 8.3.7 as an explicit dev dependency, and `@types/node` 22.20.5. Dev-only; the published packages don't change. `npm audit` is clean, including dev dependencies.
