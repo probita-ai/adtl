@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ADTL_LABEL_KEY, TRUST_ANNOTATIONS_KEY, callBindingHash } from "@adtl/labels";
+import { ADTL_LABEL_KEY, InMemorySessionStore, TRUST_ANNOTATIONS_KEY, callBindingHash, parseConfig } from "@adtl/labels";
 import {
   AdtlInterceptors,
   DECISION_INFO_KEY,
@@ -291,5 +291,47 @@ describe("fides-gateway interop (config fides.emit)", () => {
     const params = (stamp(core, { sessionId: "s1" }).payload as { params: { _meta: Record<string, unknown> } }).params;
     expect(params._meta[FIDES]).toEqual({ $: { integrity: "trusted", confidentiality: ["team-a"] } });
     expect(stamp(make(), { sessionId: "s1" }).modified).toBe(false);
+  });
+});
+
+describe("call.copiesPrivate", () => {
+  const config = parseConfig({
+    servers: {
+      fs: {
+        tools: {
+          read_file: { integrity: "trusted", confidentiality: "private", egress: "none" },
+          read_page: { integrity: "trusted", confidentiality: "public", egress: "none" },
+          write_file: { egress: "internal" },
+        },
+      },
+    },
+    policy: {
+      rules: [{ name: "copies", when: { "call.copiesPrivate": true, "tool.egress": ["internal", "external", "public", "unknown"] }, then: "ask" }],
+    },
+  });
+  const read = (core: AdtlInterceptors, tool: string, text: string, sessionId = "s1") =>
+    core.invoke({ name: "adtl.label", event: "tools/call", phase: "response", payload: { method: "tools/call", params: { name: tool, arguments: {} }, result: textResult(text) }, config: { server: "fs" }, context: { sessionId } });
+  const write = (core: AdtlInterceptors, content: string, sessionId = "s1") =>
+    (core.invoke({ name: "adtl.policy", event: "tools/call", phase: "request", payload: { method: "tools/call", params: { name: "write_file", arguments: { path: "/w/report.md", content } } }, config: { server: "fs" }, context: { sessionId } }) as ValidationResult).info?.[DECISION_INFO_KEY];
+
+  it("asks when a write copies a value read from a private result, and only then", () => {
+    const core = new AdtlInterceptors({ config });
+    read(core, "read_file", "DB_PASSWORD=Pq7rT2vW9xYz4bCd6eF\n");
+    expect(write(core, "Summary: the database is configured.")).toBe("allow");
+    expect(write(core, "password: Pq7rT2vW9xYz4bCd6eF")).toBe("ask");
+    expect(write(core, "password: Pq7rT2vW9xYz4bCd6eF", "s2")).toBe("allow");
+  });
+
+  it("ignores values from public results", () => {
+    const core = new AdtlInterceptors({ config });
+    read(core, "read_page", "token Pq7rT2vW9xYz4bCd6eF");
+    expect(write(core, "token Pq7rT2vW9xYz4bCd6eF")).toBe("allow");
+  });
+
+  it("fails closed with a session store that can't tell", () => {
+    const store = new InMemorySessionStore();
+    const plain = { get: store.get.bind(store), observe: store.observe.bind(store), reset: store.reset.bind(store) };
+    const core = new AdtlInterceptors({ config, sessions: plain });
+    expect(write(core, "nothing copied")).toBe("ask");
   });
 });

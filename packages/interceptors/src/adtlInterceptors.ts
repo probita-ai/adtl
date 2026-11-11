@@ -56,6 +56,8 @@ import {
   stampRecordLabel,
   toolEgress,
   readActionMetadata,
+  secretFingerprints,
+  usesCopiesPrivate,
   FIDES_LABELS_KEY,
   fidesLabels,
   type AdtlConfig,
@@ -80,7 +82,7 @@ export const POLICY_INTERCEPTOR = "adtl.policy";
 /** Key in `ValidationResult.info` carrying ADTL's decision, for invokers that predate `confirmation`. */
 export const DECISION_INFO_KEY = "adtl/decision";
 
-export const VERSION = "0.8.1";
+export const VERSION = "0.9.0";
 
 /** JSON-RPC error codes used for invocation errors. */
 export const ErrorCodes = {
@@ -386,6 +388,8 @@ export class AdtlInterceptors {
         if (written.length) this.ledger.record(recordIdKeys(config.server, written), before, sessionId, source);
       }
       info.sessionLabel = this.sessions.observe(sessionId, label);
+      // Secret-like values read from a private source, for call.copiesPrivate (hashes only).
+      if (label.confidentiality !== "public") this.sessions.rememberPrivateValues?.(sessionId, secretFingerprints(result));
     } else {
       info.warning = "No context.sessionId: the result was labeled but not recorded in any session";
     }
@@ -428,6 +432,7 @@ export class AdtlInterceptors {
 
     const session = this.sessions.get(sessionId);
     const meta = readActionMetadata(config.toolAnnotations);
+    const copiesPrivate = usesCopiesPrivate(this.config.policy) ? this.copiesPrivate(sessionId, rpcParams.arguments) : undefined;
     const d = evaluatePolicy(this.config.policy, {
       session,
       server: config.server,
@@ -435,6 +440,7 @@ export class AdtlInterceptors {
       egress: toolEgress(this.config, config.server, tool, config.toolAnnotations),
       ...(meta.outcome !== undefined ? { outcome: meta.outcome } : {}),
       ...(meta.requiresReview !== undefined ? { requiresReview: meta.requiresReview } : {}),
+      ...(copiesPrivate !== undefined ? { copiesPrivate } : {}),
     });
     if (d.decision !== "ask") return this.decision(params, d.decision, d.reason, d.matched, hash, session);
 
@@ -451,6 +457,12 @@ export class AdtlInterceptors {
     if (d.approvers) extra.approvers = d.approvers;
     const confirmation = this.confirmationRequest(d.reason, hash, sessionId);
     return this.decision(params, "ask", d.reason, d.matched, hash, session, extra, confirmation);
+  }
+
+  /** Whether `args` hold a value the session read from a private source; undefined if the store can't tell. */
+  private copiesPrivate(sessionId: string, args: unknown): boolean | undefined {
+    if (!this.sessions.hasPrivateValue) return undefined;
+    return this.sessions.hasPrivateValue(sessionId, secretFingerprints(args ?? {}));
   }
 
   private confirmationRequest(reason: string, hash: string, sessionId: string): ConfirmationRequest {

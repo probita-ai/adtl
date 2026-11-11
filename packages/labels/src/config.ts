@@ -86,6 +86,11 @@ export const PolicyRuleSchema = z
         "tool.outcome": oneOrMany(z.string().min(1)).optional(),
         /** The tool's action-metadata `requiresReview`. Tools that declare none count as false. */
         "tool.requiresReview": z.boolean().optional(),
+        /**
+         * The call's arguments hold a secret-like value (16+ characters with letters and digits, not plain hex)
+         * that the session read from a private or secret source.
+         */
+        "call.copiesPrivate": z.boolean().optional(),
       })
       .strict(),
     then: z.enum(DECISIONS),

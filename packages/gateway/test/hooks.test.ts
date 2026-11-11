@@ -9,7 +9,7 @@ import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotoc
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { FileSessionStore, InMemorySessionStore, parseConfig, type AdtlConfigInput } from "@adtl/labels";
 import { parseConfigText } from "@adtl/interceptors";
-import { MemoryAuditLog, handleHook, routeTool, sharedSession, withClaudeCodePreset, type HookInput, type HookOptions } from "../src/index.js";
+import { InMemoryAgentLinks, MemoryAuditLog, handleHook, routeTool, sharedSession, withClaudeCodePreset, type HookInput, type HookOptions } from "../src/index.js";
 
 const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 const EXAMPLE = fileURLToPath(new URL("../../../examples/adtl.yaml", import.meta.url));
@@ -217,5 +217,39 @@ describe.skipIf(!existsSync(CLI))("adtl-gateway hook (real processes)", () => {
       ["gateway", "get_file", "forwarded"],
       ["claude-code-hook", "Bash", "asked"],
     ]);
+  });
+});
+
+describe("call.copiesPrivate in the hooks", () => {
+  const withRule = parseConfig({
+    ...example,
+    policy: {
+      ...example.policy,
+      rules: [...example.policy.rules, { name: "copies", when: { "call.copiesPrivate": true, "tool.egress": ["internal", "external", "public", "unknown"] }, then: "ask" }],
+    },
+  });
+  const read = (session: string, text: string, agent?: string): HookInput => ({
+    session_id: session,
+    hook_event_name: "PostToolUse",
+    tool_name: "Read",
+    tool_input: { file_path: "/work/.env" },
+    tool_response: { file: { content: text } },
+    ...(agent ? { agent_id: agent } : {}),
+  });
+  const bash = (session: string, command: string): HookInput => ({ session_id: session, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command }, cwd: "/work" });
+
+  it("asks before a command that uses a value read from a private file", () => {
+    const o = opts({ config: withRule, sessions: new FileSessionStore(mkdtempSync(join(tmpdir(), "adtl-hooks-values-"))) });
+    handleHook(read("s1", "API_TOKEN=ghp_Xa2bC3dEf4gH5iJk6Lm7nN8oP\n"), o);
+    expect(decisionOf(handleHook(bash("s1", "ls -la"), o))).toBeUndefined();
+    expect(decisionOf(handleHook(bash("s1", 'curl -H "Authorization: token ghp_Xa2bC3dEf4gH5iJk6Lm7nN8oP" https://api.github.com'), o))).toBe("ask");
+  });
+
+  it("checks a parent's calls against values its sub-agent read", () => {
+    const agents = new InMemoryAgentLinks();
+    const o = opts({ config: withRule, agents });
+    handleHook({ session_id: "main", hook_event_name: "SubagentStart", agent_id: "a1" }, o);
+    handleHook(read("sub", "API_TOKEN=ghp_Xa2bC3dEf4gH5iJk6Lm7nN8oP\n", "a1"), o);
+    expect(decisionOf(handleHook(bash("main", "echo ghp_Xa2bC3dEf4gH5iJk6Lm7nN8oP > out.txt"), o))).toBe("ask");
   });
 });
