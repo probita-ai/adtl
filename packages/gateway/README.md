@@ -128,7 +128,27 @@ Labels only get stricter as a session goes on. A session that has read anything 
 
 ### Policy
 
-Rules match on `session.integrity`, `session.confidentiality`, `tool.egress`, `tool` (`server.tool` globs such as `github.*`), and, for tools that declare [action-metadata](#tools-that-describe-themselves-action-metadata), `tool.outcome` (`benign`, `consequential`, `irreversible`) and `tool.requiresReview`. They decide `allow`, `ask` or `block`. When several rules match, the most restrictive decision wins. A tool that says `requiresReview: true` gets `ask` when no rule blocks it; set `policy.honorRequiresReview: false` to turn that off. `ask` waits for a human when [approvals](#approvals) are configured, and blocks otherwise.
+Rules match on `session.integrity`, `session.confidentiality`, `tool.egress`, `tool` (`server.tool` globs such as `github.*`), [`call.copiesPrivate`](#copied-private-values), and, for tools that declare [action-metadata](#tools-that-describe-themselves-action-metadata), `tool.outcome` (`benign`, `consequential`, `irreversible`) and `tool.requiresReview`. They decide `allow`, `ask` or `block`. When several rules match, the most restrictive decision wins. A tool that says `requiresReview: true` gets `ask` when no rule blocks it; set `policy.honorRequiresReview: false` to turn that off. `ask` waits for a human when [approvals](#approvals) are configured, and blocks otherwise.
+
+#### Copied private values
+
+`call.copiesPrivate: true` matches a call whose arguments hold a value the session read earlier from a `private` or `secret` result: a token from `.env` pasted into a report, a password written into a script. A session label can't tell that write from a normal one, because nearly every session is already private; copied values can.
+
+```yaml
+policy:
+  rules:
+    - name: ask-before-copying-private-values
+      when: { call.copiesPrivate: true, tool.egress: [internal, external, public, unknown] }
+      then: ask
+```
+
+- Only secret-like values count: 16 or more letters, digits, `_`, `-` or `+` in a row, with both letters and digits, not plain hex (so git commit ids, hashes and UUIDs don't count), and not a folder name in a path.
+- The session keeps hashes of those values, never the values (`<session>.values` next to the session's label file). `ADTL_SESSIONS_DIR` and the hooks' self-protection cover it.
+- It works for calls through the gateway and for the Claude Code hooks, which share the session. A sub-agent's calls are checked against its parent's values too.
+- It only sees verbatim copies. A value that was re-encoded, split or paraphrased doesn't match.
+- A session store that can't tell (a custom `SessionStore` without `hasPrivateValue`) counts every call as copying, so the rule fails closed.
+
+On [MCPHunt's traces](../../examples/mcphunt-eval/), this rule on top of the example policy stops 78.0% of leaks with 12.7% of clean runs interrupted, against 95.2% and 95.7% for asking before every write once the session is private.
 
 ### Gateway
 

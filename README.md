@@ -93,9 +93,11 @@ v0.8 carries labels across hops: sub-agents share their parent's label (`Subagen
 
 v0.8.1 adds [authenticator-app approvals](packages/gateway#approving-with-an-authenticator-app) and [OpenFGA](packages/gateway#openfga) for relationship rules.
 
+v0.9 can ask when a call [copies a private value](packages/gateway#copied-private-values): a token read from `.env` pasted into a report or a script. On MCPHunt's traces that stops 78.0% of credential leaks while interrupting 12.7% of clean runs, where asking before every write stops 95.2% and interrupts 95.7%.
+
 ## What it doesn't catch
 
-Replaying [MCPHunt](examples/mcphunt-eval)'s 3,615 recorded agent runs, ADTL's example policy would have stopped **0.6%** of the policy-violating credential leaks. Those leaks are mostly secrets copied into local files, which that policy allows: it's about data leaving, and a session label can't tell a leaking write from a normal one. Asking on every write stops 95.2% of them but interrupts 95.7% of clean runs. A replay isn't a live test, and the benchmark doesn't cover injected instructions, which is what ADTL's demos stop. See [the write-up](examples/mcphunt-eval).
+Replaying [MCPHunt](examples/mcphunt-eval)'s 3,615 recorded agent runs, ADTL's example policy would have stopped **0.6%** of the policy-violating credential leaks. Those leaks are mostly secrets copied into local files, which that policy allows: it's about data leaving, and a session label can't tell a leaking write from a normal one. Asking on every write stops 95.2% of them but interrupts 95.7% of clean runs. Asking only when a call copies a secret-like value the session read from a private source ([`call.copiesPrivate`](packages/gateway/README.md#copied-private-values)) stops 78.0% and interrupts 12.7%. A replay isn't a live test, and the benchmark doesn't cover injected instructions, which is what ADTL's demos stop. See [the write-up](examples/mcphunt-eval).
 
 Planned next:
 

@@ -31,7 +31,9 @@ import {
   callHash,
   evaluatePolicy,
   labelResult,
+  secretFingerprints,
   toolEgress,
+  usesCopiesPrivate,
   type AdtlConfig,
   type Decision,
   type PolicyDecision,
@@ -190,10 +192,17 @@ export function addedLines(output: unknown): string[] {
  * parent session, else the call's own. When the two differ, the sub-agent's own
  * label is read too, so nothing it saw is lost.
  */
-function sessionFor(input: HookInput & { session_id: string }, opts: HookOptions): { id: string; get(): Label } {
+function sessionFor(input: HookInput & { session_id: string }, opts: HookOptions): { id: string; ids: string[]; get(): Label } {
   const parent = typeof input.agent_id === "string" ? opts.agents?.parentOf(input.agent_id) : undefined;
-  if (!parent || parent === input.session_id) return { id: input.session_id, get: () => opts.sessions.get(input.session_id) };
-  return { id: parent, get: () => join(opts.sessions.get(parent), opts.sessions.get(input.session_id)) };
+  if (!parent || parent === input.session_id) return { id: input.session_id, ids: [input.session_id], get: () => opts.sessions.get(input.session_id) };
+  return { id: parent, ids: [parent, input.session_id], get: () => join(opts.sessions.get(parent), opts.sessions.get(input.session_id)) };
+}
+
+/** Whether `args` hold a value one of the sessions read from a private source; undefined if the store can't tell. */
+function copiesPrivate(sessions: SessionStore, ids: string[], args: unknown): boolean | undefined {
+  if (!sessions.hasPrivateValue) return undefined;
+  const prints = secretFingerprints(args ?? {});
+  return ids.some((id) => sessions.hasPrivateValue!(id, prints));
 }
 
 export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
@@ -233,6 +242,8 @@ export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
       opts.ledger.record(written, before, session.id, route);
     }
     const sessionLabel = join(session.get(), opts.sessions.observe(session.id, label));
+    // Secret-like values read from a private source, for call.copiesPrivate (hashes only).
+    if (label.confidentiality !== "public") opts.sessions.rememberPrivateValues?.(session.id, secretFingerprints(output));
     opts.audit?.write({ ...base, outcome: "forwarded", label, ...(ledger ? { ledger } : {}), sessionLabel, durationMs: 0 });
     return NOTHING;
   }
@@ -240,10 +251,12 @@ export function handleHook(input: HookInput, opts: HookOptions): HookOutcome {
   const hash = callHash(route.server, route.tool, input.tool_input ?? {});
   const current = session.get();
   const guard = protectedTarget(input, route, opts.protect);
+  const copies = usesCopiesPrivate(config.policy) ? copiesPrivate(opts.sessions, session.ids, input.tool_input) : undefined;
   const policy: PolicyDecision = evaluatePolicy(config.policy, {
     session: current,
     ...route,
     egress: toolEgress(config, route.server, route.tool),
+    ...(copies !== undefined ? { copiesPrivate: copies } : {}),
   });
   const d: PolicyDecision =
     guard && (guard.decision === "block" || policy.decision === "allow")

@@ -6,6 +6,8 @@ import {
   TRUST_ANNOTATIONS_KEY,
   attachLabel,
   digest,
+  labelResult,
+  parseConfig,
   readClaims,
   type Label,
 } from "../src/index.js";
@@ -69,5 +71,25 @@ describe("attachLabel", () => {
     const input = { content: [] as unknown[] };
     attachLabel(input, label);
     expect(input).toEqual({ content: [] });
+  });
+});
+
+describe("data-class.v1 evidence", () => {
+  // The scheme (experimental-ext-tool-annotations schemes/data-class.md) only refines `sensitive: true`
+  // and doesn't say yet where its record lives, so ADTL reads the boolean and ignores the record.
+  const result = {
+    content: [{ type: "text", text: "patient record" }],
+    _meta: {
+      [TRUST_ANNOTATIONS_KEY]: {
+        sensitive: true,
+        evidenceRef: { type: "data-class.v1", digest: "sha256:00", canonicalization: "jcs/rfc8785" },
+      },
+    },
+  };
+
+  it("reads the sensitive claim, so the result is at least private, from any server", () => {
+    expect(readClaims(result)).toEqual({ sensitive: true });
+    const config = parseConfig({ servers: { ehr: { tools: { get: { integrity: "trusted", confidentiality: "public" } } } } });
+    expect(labelResult({ server: "ehr", tool: "get", result }, config).confidentiality).toBe("private");
   });
 });

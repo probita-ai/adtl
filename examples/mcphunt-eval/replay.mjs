@@ -7,7 +7,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { InMemorySessionStore, evaluatePolicy, labelResult, parseConfig, toolEgress } from "@adtl/labels";
+import { InMemorySessionStore, evaluatePolicy, labelResult, parseConfig, secretFingerprints, toolEgress, usesCopiesPrivate } from "@adtl/labels";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const labels = parse(readFileSync(join(here, "adtl.yaml"), "utf8"));
@@ -19,12 +19,15 @@ const EXAMPLE = [
 ];
 const PRIVATE_OUT = { name: "ask-private-out", when: { "session.confidentiality": ["private", "secret"], "tool.egress": ["external", "unknown"] }, then: "ask" };
 const PRIVATE_WRITES = { name: "ask-private-writes", when: { "session.confidentiality": ["private", "secret"], "tool.egress": "internal" }, then: "ask" };
+// ADTL's call.copiesPrivate, as the README suggests it.
+const COPIES_PRIVATE = { name: "ask-before-copying-private-values", when: { "call.copiesPrivate": true, "tool.egress": ["internal", "external", "public", "unknown"] }, then: "ask" };
 
 const POLICIES = {
   example: { rules: EXAMPLE },
   "ask-on-leaving": { rules: [...EXAMPLE, PRIVATE_OUT] },
   "ask-on-any-write": { rules: [...EXAMPLE, PRIVATE_OUT, PRIVATE_WRITES] },
-  "example + copied values": { rules: EXAMPLE, copied: true },
+  "example + copies private": { rules: [...EXAMPLE, COPIES_PRIVATE] },
+  "prototype: example + copied values": { rules: EXAMPLE, copied: true },
 };
 
 // Long, unbroken values: tokens and passwords, but not paths or prose.
@@ -32,21 +35,27 @@ const VALUE = /[A-Za-z0-9_+=-]{16,}/g;
 const values = (text) => new Set(String(text ?? "").match(VALUE) ?? []);
 
 /**
- * Walk one run and return the decision on every call. With `copied`, a write
- * that the rules allow still asks if its arguments hold a long value read
- * earlier from a private source. ADTL doesn't do this today; it measures
- * whether it would help.
+ * Walk one run and return the decision on every call, the way the gateway
+ * would: the session remembers fingerprints of secret-like values from
+ * private results, and `call.copiesPrivate` checks each call's arguments.
+ * `copied` is the 0.8.1 prototype instead (any long value, kept as is), for comparison.
  */
 function replay(trace, config, copied) {
   const sessions = new InMemorySessionStore();
   const seen = new Set();
+  const checkCopies = usesCopiesPrivate(config.policy);
   return trace.events.map((e) => {
     const egress = toolEgress(config, e.server, e.tool);
-    let { decision } = evaluatePolicy(config.policy, { session: sessions.get("s"), server: e.server, tool: e.tool, egress });
+    const copiesPrivate = checkCopies ? sessions.hasPrivateValue("s", secretFingerprints(e.args ?? {})) : undefined;
+    let { decision } = evaluatePolicy(config.policy, { session: sessions.get("s"), server: e.server, tool: e.tool, egress, ...(checkCopies ? { copiesPrivate } : {}) });
     if (copied && decision === "allow" && egress !== "none" && [...values(JSON.stringify(e.args))].some((v) => seen.has(v))) decision = "ask";
     const label = labelResult({ server: e.server, tool: e.tool, result: {} }, config);
     sessions.observe("s", label);
-    if (label.confidentiality !== "public") for (const v of values(e.result_full ?? e.result_preview)) seen.add(v);
+    const output = e.result_full ?? e.result_preview;
+    if (label.confidentiality !== "public") {
+      sessions.rememberPrivateValues("s", secretFingerprints(output ?? ""));
+      if (copied) for (const v of values(output)) seen.add(v);
+    }
     return decision;
   });
 }
@@ -121,10 +130,10 @@ if (process.argv.includes("--json")) {
   }
   console.log(`\nleaks located: ${results.policies.example.all.located} of ${results.policies.example.all.leaks}; clean runs: ${results.policies.example.all.clean}`);
   console.log("\nfirst leaking call:", Object.entries(results.sinks).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(", "));
-  for (const name of ["ask-on-any-write", "example + copied values"]) {
+  for (const name of ["ask-on-any-write", "example + copies private", "prototype: example + copied values"]) {
     console.log(`\nleaks stopped by mechanism, ${name}:`);
     for (const [m, v] of Object.entries(results.policies[name].all.byMechanism)) console.log(`  ${m}: ${v.stopped}/${v.leaks}`);
   }
-  console.log("\nper model, example + copied values (stopped of located; clean runs asked):");
-  for (const [m, s] of Object.entries(results.policies["example + copied values"].models)) console.log(`  ${m}: ${s.blocked + s.asked}/${s.located}; ${pct(s.cleanAsked, s.clean)}`);
+  console.log("\nper model, example + copies private (stopped of located; clean runs asked):");
+  for (const [m, s] of Object.entries(results.policies["example + copies private"].models)) console.log(`  ${m}: ${s.blocked + s.asked}/${s.located}; ${pct(s.cleanAsked, s.clean)}`);
 }

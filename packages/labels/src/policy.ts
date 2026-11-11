@@ -18,6 +18,11 @@ export interface PolicyInput {
   /** From the tool's action-metadata, if it declares one. */
   outcome?: string;
   requiresReview?: boolean;
+  /**
+   * The call's arguments hold a secret-like value the session read from a
+   * private source (see values.ts). Unknown (undefined) counts as true.
+   */
+  copiesPrivate?: boolean;
 }
 
 export interface PolicyDecision {
@@ -56,12 +61,19 @@ export function ruleMatches(rule: PolicyRule, input: PolicyInput): boolean {
   const outcome = asArray(w["tool.outcome"]);
   if (outcome && (input.outcome === undefined || !outcome.includes(input.outcome))) return false;
   if (w["tool.requiresReview"] !== undefined && w["tool.requiresReview"] !== (input.requiresReview === true)) return false;
+  // Fail closed: a caller that can't tell is treated as copying.
+  if (w["call.copiesPrivate"] !== undefined && w["call.copiesPrivate"] !== (input.copiesPrivate ?? true)) return false;
   const tools = asArray(w.tool);
   if (tools) {
     const qualified = `${input.server}.${input.tool}`;
     if (!tools.some((t) => globToRegExp(t).test(qualified))) return false;
   }
   return true;
+}
+
+/** True if any rule of `policy` uses `call.copiesPrivate`, so callers only fingerprint arguments when it matters. */
+export function usesCopiesPrivate(policy: Policy): boolean {
+  return policy.rules.some((r) => r.when["call.copiesPrivate"] !== undefined);
 }
 
 /** The rule name reported when `honorRequiresReview` turns an allow into an ask. */

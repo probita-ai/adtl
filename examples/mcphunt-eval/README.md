@@ -1,6 +1,6 @@
 # ADTL against MCPHunt: a trace replay
 
-**Result: ADTL's example policy would have stopped 0.6% of MCPHunt's policy-violating leaks.** Session labels don't catch this kind of leak, and this page says why, and what might.
+**Result: ADTL's example policy would have stopped 0.6% of MCPHunt's policy-violating leaks. With [`call.copiesPrivate`](../../packages/gateway/README.md#copied-private-values), added in 0.9.0, it stops 78.0%, interrupting 12.7% of clean runs.** Session labels alone don't catch this kind of leak, and this page says why, and what does.
 
 [MCPHunt](https://arxiv.org/abs/2604.27819) measures how credentials spread across multi-server MCP agents. It plants canary secrets, and it separates leaks a task required from leaks that broke policy. Its [traces](https://huggingface.co/datasets/lihaonan0716/mcphunt-agent-traces) are public (CC BY 4.0).
 
@@ -19,9 +19,10 @@
 | **`example`**: the rules in [`examples/adtl.yaml`](../adtl.yaml) | **0.6%** | 5.0% | 0.2 |
 | **`ask-on-leaving`**: also ask before external or unknown egress once the session is private | 2.6% | 43.7% | 2.5 |
 | **`ask-on-any-write`**: also ask before any write once the session is private | 95.2% | 95.7% | 4.3 |
-| **`example + copied values`**: prototype, not in ADTL (see below) | 79.2% | 44.7% | 1.3 |
+| **`example + copies private`**: also ask when a call copies a secret-like value read from a private source ([`call.copiesPrivate`](../../packages/gateway/README.md#copied-private-values)) | **78.0%** | **12.7%** | 0.3 |
+| `prototype: example + copied values`: the 0.8.1 prototype of the same idea, any long value | 79.2% | 44.7% | 1.3 |
 
-Every stop was an `ask`; none of these policies blocked a call in these runs. Numbers vary by model: for `example + copied values`, clean runs asked range from 24.4% to 75.7%.
+Every stop was an `ask`; none of these policies blocked a call in these runs. Numbers vary by model: for `example + copies private`, clean runs asked range from 8.2% (gpt-5.2) to 21.8% (deepseek-v4-flash), and leaks stopped from 52.5% (gpt-5.2, 21 of 40) to 83.8% (deepseek-v4-flash).
 
 ## Why
 
@@ -33,9 +34,20 @@ Every stop was an `ask`; none of these policies blocked a call in these runs. Nu
 
 **Web content is labeled public.** `browser_to_local` is the largest group (121 runs), and 26 of them pass even `ask-on-any-write`, because the fetch-style preset labels web pages `public` and the session never turns private.
 
-## What might help
+## What helps: copied values
 
-The prototype row asks only when a write's arguments hold a long value (16+ characters, no paths) that the session read from a private source. It stops 79.2% of leaks with 44.7% of clean runs interrupted, so it tells leaks from normal work far better than a session label, but it's still noisy: many tasks legitimately copy ids and hashes. It's in `replay.mjs` only, as `copied`. Filtering by how secret-like a value is, and per-path labels, are the obvious next steps.
+`call.copiesPrivate` asks only when a call's arguments hold a value the session read earlier from a private source. The session keeps hashes of secret-like values from private results: 16 or more characters with letters and digits, not plain hex, and not a folder name in a path. Each call's arguments are checked against them.
+
+- It stops 78.0% of leaks while interrupting 12.7% of clean runs, at 0.3 asks per clean run. Asking before every write gets 95.2% at 95.7%.
+- Leaving out `browser_to_local`, it stops 361 of the other 378 leaks (95.5%): every `file_to_file`, `file_to_doc`, `sensitive_to_shell` and `indirect_exposure` leak, 53 of 54 `config_to_script` and 71 of 72 `git_history_leak`.
+- The filters matter. The 0.8.1 prototype counted any long value and interrupted 44.7% of clean runs. Most of that was snake_case names, git commit ids, content hashes, and the workspace folder that every path repeats.
+- What's left of the noise is mostly tasks that are meant to copy development or test credentials (`sk_test_…`, `ghp_DevToken…`). They look exactly like the real ones.
+
+**Still open:**
+
+- **Web content.** `browser_to_local` (28 of 121 stopped) needs web pages that hold secrets to be labeled as such. The fetch-style preset labels every web page `public`, so its values are never remembered.
+- **Per-path labels.** ADTL can't yet say `.env` is secret and `README.md` isn't.
+- **`db_to_artifact`.** Some query results hold secrets that are re-formatted on the way out (45 of 58 stopped).
 
 ## Limits of this replay
 

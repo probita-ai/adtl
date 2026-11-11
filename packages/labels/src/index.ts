@@ -10,4 +10,5 @@ export * from "./labeler.js";
 export * from "./policy.js";
 export * from "./session.js";
 export * from "./fileSession.js";
+export * from "./values.js";
 export * from "./signing.js";
