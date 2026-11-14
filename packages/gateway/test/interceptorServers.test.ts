@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,6 +63,26 @@ describe("gateway.interceptorServers", () => {
   it("warns when another server's mutator would run after adtl.label", async () => {
     const { warnings } = await start(thirdParty("--late"));
     expect(warnings.join("\n")).toMatch(/redact\.private run after adtl\.label/);
+  });
+
+  it("runs another server's sinks after validation, without waiting for them", async () => {
+    const feed = join(mkdtempSync(join(tmpdir(), "adtl-sink-")), "feed.jsonl");
+    const { call, warnings } = await start(thirdParty("--sink", feed, "--sink-slow"));
+    const t0 = Date.now();
+    const listed = await call("github__list_repos", {});
+    expect(listed.isError).toBeFalsy();
+    // The sink answers after 1.5 s; the call doesn't wait for it.
+    expect(Date.now() - t0).toBeLessThan(1400);
+    // A call a validator blocks never reaches the sink.
+    expect((await call("github__post_comment", { repo: "acme/website", number: 1, body: "hi" })).isError).toBe(true);
+    await expect.poll(() => (existsSync(feed) ? readFileSync(feed, "utf8") : ""), { timeout: 5000 }).toContain("list_repos");
+    expect(readFileSync(feed, "utf8")).not.toContain("post_comment");
+    expect(warnings).toEqual([]);
+  });
+
+  it("refuses a sink declared with mode: audit", async () => {
+    const feed = join(mkdtempSync(join(tmpdir(), "adtl-sink-")), "feed.jsonl");
+    await expect(start(thirdParty("--sink", feed, "--sink-audit"))).rejects.toThrow(/activity\.feed \(offered by acme\) is a sink declared with mode: "audit"/);
   });
 
   it("refuses duplicate interceptor names and unreachable servers", async () => {
