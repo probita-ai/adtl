@@ -182,6 +182,7 @@ gateway:
 - They get the call's payload and context, but not ADTL's per-call `config` (server, tool, annotations), so their own defaults apply.
 - The gateway refuses to start if a server can't be reached, doesn't declare the interceptors extension, or offers an interceptor whose name another server already uses.
 - `adtl.label` runs late (priority 1000) so its label describes the final content. A mutator that would run after it gets a warning at startup, since it could change or drop the label; give it a lower `priorityHint` with an [override](#interceptor-overrides).
+- Sinks (`type: "sink"`, proposed in [experimental-ext-interceptors#28](https://github.com/modelcontextprotocol/experimental-ext-interceptors/pull/28)) react to a call without affecting it: an activity feed, an avatar, a background indexer. They run in parallel once validation has passed (after the validators when sending, before the mutators when receiving) and the gateway never waits for them. A sink that fails or times out is logged as a warning and never blocks, whatever its `failOpen`. A call a validator stops never reaches a sink. The gateway refuses to start if a sink declares `mode: "audit"` or an override gives it one.
 
 #### Interceptor overrides
 
