@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.3-rc.1 — experimental
+
+A release candidate for testing: interceptor servers can offer sinks.
+
+### Upgrading
+- No config changes are needed. Sinks only run when an interceptor server in `gateway.interceptorServers` offers one.
+- `InterceptorInvoker` takes an optional fifth argument, `onSinkError`. The gateway logs sink failures with it.
+
+### `@adtl/gateway`
+- Sinks ([#53](https://github.com/probita-ai/adtl/issues/53), following the proposal in [experimental-ext-interceptors#28](https://github.com/modelcontextprotocol/experimental-ext-interceptors/pull/28)): interceptors with `type: "sink"` now run instead of being skipped with a warning. They are dispatched in parallel once validation has passed (sending: mutate, validate, then sinks; receiving: validate, sinks, then mutate) and never awaited, each with its own copy of the payload. A sink that fails or times out is logged and never blocks, whatever its `failOpen`, and the gateway's audit mode doesn't apply to sinks. Startup stops on a sink declared with `mode: "audit"` or given it by an override, as the proposal requires. Audit entries mark sinks with `sink: true`. Closing the gateway waits for dispatched sinks to settle.
+- `invalidSinks()` and `InterceptorInvoker.sinksSettled()` are exported. `unsupportedInterceptors()` no longer lists sinks.
+
+### `@adtl/interceptors`
+- `InterceptorDefinition.type` accepts `"sink"`, and `SinkResult` (`recorded: boolean`) joins `InterceptorResult`.
+
+### Security
+- Updated the transitive `hono` (4.13.18) and `@hono/node-server` (2.1.8), pulled in by `@modelcontextprotocol/sdk`, for published advisories. `npm audit` is clean, including dev dependencies.
+
 ## 0.8.2 — experimental
 
 Ask when a call copies a private value. Session labels can't tell a leaking write from a normal one, because nearly every session is already private; copied values can.
