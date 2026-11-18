@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.8.3-rc.1 — experimental
+## 0.8.3 — experimental
 
-A release candidate for testing: interceptor servers can offer sinks.
+Interceptor servers can offer sinks. Unchanged from 0.8.3-rc.1.
 
 ### Upgrading
 - No config changes are needed. Sinks only run when an interceptor server in `gateway.interceptorServers` offers one.
