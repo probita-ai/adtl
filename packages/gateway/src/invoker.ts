@@ -6,6 +6,18 @@
  * - Receiving (response phase, upstream → gateway): Validate (parallel) →
  *   Mutate (sequential).
  *
+ * Sinks (proposed in experimental-ext-interceptors#28) run once validation
+ * has passed: after it when sending, before the mutations when receiving.
+ * They are dispatched in parallel and never awaited, see only the payload as
+ * it stands at that point, and can't block or change anything; a sink that
+ * fails is reported through `onSinkError`. `failOpen` and the global audit
+ * mode don't apply to them, and a sink declared or overridden to
+ * `mode: "audit"` is rejected (see `invalidSinks`).
+ *
+ * Direction comes from which method the gateway calls (`runRequest` for what
+ * it sends upstream, `runResponse` for what it receives), never from `phase`
+ * alone. The gateway only intercepts client-initiated events.
+ *
  * Only `severity: "error"` blocks. A blocking result with a `confirmation`
  * request is an "ask"; the gateway may ask a human and re-validate. Audit-mode interceptors never block, and
  * their mutations are not applied. An interceptor that fails (error or
@@ -107,6 +119,8 @@ export interface InterceptorRun {
   timeoutMs: number;
   /** Set when the invocation errored or timed out. */
   failed?: true;
+  /** Set for a sink: dispatched without waiting, so it had no effect on the message. */
+  sink?: true;
 }
 
 export interface PhaseOutcome {
@@ -160,11 +174,29 @@ export function checkOverrides(defs: InterceptorDefinition[], overrides: Record<
   return problems;
 }
 
-/** Interceptors of a type this invoker doesn't run (e.g. the proposed `sink`). They are never invoked. */
+const RUNNABLE_TYPES: ReadonlySet<string> = new Set(["validation", "mutation", "sink"]);
+
+/** Interceptors of a type this invoker doesn't run. They are never invoked. */
 export function unsupportedInterceptors(bound: BoundInterceptor[]): string[] {
   return bound
-    .filter((b) => b.definition.type !== "validation" && b.definition.type !== "mutation")
+    .filter((b) => !RUNNABLE_TYPES.has(b.definition.type))
     .map((b) => `${b.definition.name} (${String(b.definition.type)})`);
+}
+
+/**
+ * Sinks that must be rejected: declared with `mode: "audit"`, or given it by
+ * an override (experimental-ext-interceptors#28: audit mode is meaningless
+ * for a type that never enforces).
+ */
+export function invalidSinks(bound: BoundInterceptor[], overrides: Record<string, InterceptorOverrides> = {}): string[] {
+  const problems: string[] = [];
+  for (const b of bound) {
+    if (b.definition.type !== "sink") continue;
+    const where = b.server ? ` (offered by ${b.server})` : "";
+    if (b.definition.mode === "audit") problems.push(`${b.definition.name}${where} is a sink declared with mode: "audit"`);
+    if (overrides[b.definition.name]?.mode === "audit") problems.push(`${b.definition.name} is a sink; an override can't give it mode: "audit"`);
+  }
+  return problems;
 }
 
 /** Interceptor names offered by more than one server: each must be invoked on its own server, so names must be unique. */
@@ -207,7 +239,16 @@ export class InterceptorInvoker {
     readonly modeOverride?: InterceptorMode,
     /** Per-interceptor overrides, by name. Check them with `checkOverrides` first. */
     private readonly overrides: Record<string, InterceptorOverrides> = {},
+    /** Called when a sink fails or times out. Sink failures never block, so this is the only place they show. */
+    private readonly onSinkError: (message: string) => void = () => {},
   ) {}
+
+  private readonly pendingSinks = new Set<Promise<void>>();
+
+  /** Resolves once every sink dispatched so far has settled (e.g. before closing the clients). */
+  async sinksSettled(): Promise<void> {
+    while (this.pendingSinks.size) await Promise.allSettled([...this.pendingSinks]);
+  }
 
   /** Discover the interceptors an interceptor server offers. */
   static async discover(client: Client, opts: { server?: string; sendConfig?: boolean } = {}): Promise<BoundInterceptor[]> {
@@ -223,13 +264,14 @@ export class InterceptorInvoker {
   async runRequest(opts: InvokeOptions): Promise<PhaseOutcome> {
     const out: PhaseOutcome = { payload: opts.payload, results: [], warnings: [], ran: [] };
     if (!(await this.mutate("request", opts, out))) return out;
-    await this.validate("request", opts, out);
+    if (await this.validate("request", opts, out)) this.sink("request", opts, out);
     return out;
   }
 
   async runResponse(opts: InvokeOptions): Promise<PhaseOutcome> {
     const out: PhaseOutcome = { payload: opts.payload, results: [], warnings: [], ran: [] };
     if (!(await this.validate("response", opts, out))) return out;
+    this.sink("response", opts, out);
     await this.mutate("response", opts, out);
     return out;
   }
@@ -239,6 +281,8 @@ export class InterceptorInvoker {
   }
 
   private mode(i: BoundInterceptor): InterceptorMode {
+    // A sink never enforces, so audit mode has nothing to turn off.
+    if (i.definition.type === "sink") return "active";
     return this.modeOverride ?? this.override(i)?.mode ?? i.definition.mode ?? "active";
   }
 
@@ -247,6 +291,7 @@ export class InterceptorInvoker {
   }
 
   private failOpen(i: BoundInterceptor): boolean {
+    if (i.definition.type === "sink") return true;
     return (this.override(i)?.failOpen ?? i.definition.failOpen) === true;
   }
 
@@ -257,14 +302,16 @@ export class InterceptorInvoker {
   /** Record that `i` runs in `phase`, with its resolved policy. */
   private run(i: BoundInterceptor, phase: Phase, out: PhaseOutcome): InterceptorRun {
     const o = this.override(i);
+    const sink = i.definition.type === "sink";
     const r: InterceptorRun = {
       name: i.definition.name,
       phase,
       mode: this.mode(i),
-      modeFrom: this.modeOverride || o?.mode ? "override" : "default",
+      modeFrom: !sink && (this.modeOverride || o?.mode) ? "override" : "default",
       failOpen: this.failOpen(i),
-      failOpenFrom: o?.failOpen !== undefined ? "override" : "default",
+      failOpenFrom: !sink && o?.failOpen !== undefined ? "override" : "default",
       timeoutMs: this.timeout(i),
+      ...(sink ? { sink: true as const } : {}),
     };
     out.ran.push(r);
     return r;
@@ -304,6 +351,33 @@ export class InterceptorInvoker {
     }
     out.blocked = { interceptor: i.definition.name, decision: "block", reason: msg };
     return false;
+  }
+
+  /**
+   * Dispatch the sinks hooked on this phase without waiting for them. Each
+   * gets its own copy of the payload, so nothing it does can reach the message.
+   */
+  private sink(phase: Phase, opts: InvokeOptions, out: PhaseOutcome): void {
+    for (const i of this.select("sink", opts.event, phase)) {
+      const ran = this.run(i, phase, out);
+      const report = (err: unknown) => {
+        ran.failed = true;
+        try {
+          this.onSinkError(`sink ${i.definition.name} failed: ${err instanceof Error ? err.message : String(err)}`);
+        } catch {
+          // A failing reporter must not turn into an unhandled rejection.
+        }
+      };
+      let p: Promise<void>;
+      try {
+        p = this.invoke(i, phase, opts, structuredClone(out.payload)).then(() => undefined, report);
+      } catch (err) {
+        report(err);
+        continue;
+      }
+      this.pendingSinks.add(p);
+      void p.finally(() => this.pendingSinks.delete(p));
+    }
   }
 
   /** Sequential mutations, atomic: on failure the original payload is kept. */

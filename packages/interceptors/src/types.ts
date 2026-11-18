@@ -27,7 +27,11 @@ export interface InterceptorDefinition {
   name: string;
   version?: string;
   description?: string;
-  type: "validation" | "mutation";
+  /**
+   * `sink` is proposed (experimental-ext-interceptors#28): a sink reacts to an
+   * event but never blocks or changes it, and must not declare `mode: "audit"`.
+   */
+  type: "validation" | "mutation" | "sink";
   hooks: InterceptorHook[];
   mode?: "active" | "audit";
   failOpen?: boolean;
@@ -112,7 +116,14 @@ export interface MutationResult extends ResultBase {
   payload: unknown;
 }
 
-export type InterceptorResult = ValidationResult | MutationResult;
+/** A sink's acknowledgment (proposed, experimental-ext-interceptors#28). It never affects the message. */
+export interface SinkResult extends ResultBase {
+  type: "sink";
+  /** The sink accepted the event; not a promise that its own work finished. */
+  recorded: boolean;
+}
+
+export type InterceptorResult = ValidationResult | MutationResult | SinkResult;
 
 const PhaseSchema = z.enum(["request", "response"]);
 
