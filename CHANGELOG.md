@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.8.4 — experimental
+
+Accepts the plural `interceptors/invoke` method name that SEP-2624 may move to. Nothing changes for existing setups.
+
+### Upgrading
+- No config changes are needed.
 
 ### `@adtl/interceptors`
 - The interceptor server also answers `interceptors/invoke`, the plural name SEP-2624 may move to ([#53](https://github.com/probita-ai/adtl/issues/53)). `interceptor/invoke` still works and is still the default. `INVOKE_METHOD_PLURAL` and `InvokePluralRequestSchema` are exported.
