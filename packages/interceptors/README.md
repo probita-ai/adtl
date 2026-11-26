@@ -17,7 +17,7 @@ Most people should use [`@adtl/gateway`](https://www.npmjs.com/package/@adtl/gat
 npx -y @adtl/interceptors --config adtl.yaml
 ```
 
-The server speaks MCP over stdio. It declares `capabilities.extensions["io.modelcontextprotocol/interceptors"]` and answers `interceptors/list` and `interceptor/invoke`. See [`@adtl/gateway`](https://www.npmjs.com/package/@adtl/gateway) for the config format.
+The server speaks MCP over stdio. It declares `capabilities.extensions["io.modelcontextprotocol/interceptors"]` and answers `interceptors/list` and `interceptor/invoke` (also as `interceptors/invoke`, the plural name the WG is considering). See [`@adtl/gateway`](https://www.npmjs.com/package/@adtl/gateway) for the config format.
 
 ## Invocation details
 

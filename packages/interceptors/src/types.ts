@@ -12,6 +12,12 @@ export const INTERCEPTORS_EXTENSION = "io.modelcontextprotocol/interceptors";
 
 export const LIST_METHOD = "interceptors/list";
 export const INVOKE_METHOD = "interceptor/invoke";
+/**
+ * The plural spelling SEP-2624 may move to, to match `interceptors/list`
+ * (under WG consideration). Servers answer both; the invoker sends
+ * INVOKE_METHOD and falls back to this one.
+ */
+export const INVOKE_METHOD_PLURAL = "interceptors/invoke";
 
 /** Lifecycle event, e.g. "tools/call". The draft allows custom events. */
 export type InterceptionEvent = string;
@@ -181,5 +187,11 @@ export const ListRequestSchema = z.object({
  */
 export const InvokeRequestSchema = z.object({
   method: z.literal(INVOKE_METHOD),
+  params: z.unknown().optional(),
+});
+
+/** The same request under the plural method name. */
+export const InvokePluralRequestSchema = z.object({
+  method: z.literal(INVOKE_METHOD_PLURAL),
   params: z.unknown().optional(),
 });

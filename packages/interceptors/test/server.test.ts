@@ -49,6 +49,13 @@ describe("MCP interceptor server (in memory)", () => {
     expect(filtered.interceptors.map((d: Loose) => d.name)).toEqual(["adtl.label"]);
   });
 
+  it("answers the plural interceptors/invoke the same way", async () => {
+    const client = await connectInMemory();
+    const r = await call(client, "interceptors/invoke", policyCall("post_comment", {}, "s1"));
+    expect(r).toMatchObject({ interceptor: "adtl.policy", type: "validation", phase: "request", valid: true });
+    await expect(call(client, "interceptors/invoke", { name: "adtl.policy" })).rejects.toMatchObject({ code: -32602 });
+  });
+
   it("runs the attack end to end over interceptor/invoke", async () => {
     const client = await connectInMemory();
     const decide = async () => (await call(client, "interceptor/invoke", policyCall("post_comment", {}, "s1"))).info[DECISION_INFO_KEY];

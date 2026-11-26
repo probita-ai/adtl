@@ -33,6 +33,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   DECISION_INFO_KEY,
   INVOKE_METHOD,
+  INVOKE_METHOD_PLURAL,
   LIST_METHOD,
   type ConfirmationRequest,
   type InterceptorDefinition,
@@ -47,6 +48,11 @@ import type { Decision } from "@adtl/labels";
 import { z } from "zod";
 
 const AnyResult = z.object({}).passthrough();
+
+const METHOD_NOT_FOUND = -32601;
+
+/** Interceptor servers found to answer only `interceptors/invoke`. */
+const invokeMethods = new WeakMap<Client, string>();
 
 type Loose = Record<string, unknown>;
 
@@ -325,21 +331,25 @@ export class InterceptorInvoker {
 
   private async invoke(i: BoundInterceptor, phase: Phase, opts: InvokeOptions, payload: unknown): Promise<InterceptorResult> {
     const timeoutMs = this.timeout(i);
-    const res = await request(
-      i.client,
-      INVOKE_METHOD,
-      {
-        name: i.definition.name,
-        event: opts.event,
-        phase,
-        payload,
-        ...(i.sendConfig === false ? {} : { config: opts.config }),
-        timeoutMs,
-        context: opts.context,
-      },
+    const params = {
+      name: i.definition.name,
+      event: opts.event,
+      phase,
+      payload,
+      ...(i.sendConfig === false ? {} : { config: opts.config }),
       timeoutMs,
-    );
-    return res as unknown as InterceptorResult;
+      context: opts.context,
+    };
+    const method = invokeMethods.get(i.client) ?? INVOKE_METHOD;
+    try {
+      return (await request(i.client, method, params, timeoutMs)) as unknown as InterceptorResult;
+    } catch (err) {
+      // A server that only knows the plural name SEP-2624 may move to. Try it once, then keep using it.
+      if (method !== INVOKE_METHOD || (err as { code?: unknown })?.code !== METHOD_NOT_FOUND) throw err;
+      const res = await request(i.client, INVOKE_METHOD_PLURAL, params, timeoutMs);
+      invokeMethods.set(i.client, INVOKE_METHOD_PLURAL);
+      return res as unknown as InterceptorResult;
+    }
   }
 
   /** Handle an interceptor failure. Returns false if the phase must stop. */
