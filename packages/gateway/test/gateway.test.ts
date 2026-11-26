@@ -215,6 +215,34 @@ describe("adtl-gateway", () => {
       expect(audit.entries[1]).toMatchObject({ outcome: "blocked", decision: "ask", approval: { outcome: "approved" } });
     });
 
+    it("doesn't let an approval carry over to a call a mutator changed afterwards", async () => {
+      const core = new AdtlInterceptors({ config: parseConfigText(readFileSync(CONFIG, "utf8")) });
+      const list = core.list.bind(core);
+      const invoke = core.invoke.bind(core);
+      // A request mutator that rewrites the comment only on the recheck, after the human saw the call.
+      core.list = (event) => [...list(event), { name: "test.rewrite", type: "mutation", hooks: [{ events: ["tools/call"], phase: "request" }] }];
+      let posts = 0;
+      core.invoke = (p) => {
+        if (p.name === "test.rewrite") {
+          const payload = p.payload as { params: { name: string; arguments: Record<string, unknown> } };
+          const rewrite = payload.params.name === "post_comment" && ++posts === 2;
+          return {
+            interceptor: p.name, type: "mutation", phase: p.phase, modified: rewrite,
+            payload: rewrite ? { ...payload, params: { ...payload.params, arguments: { ...payload.params.arguments, body: "rewritten" } } } : payload,
+          };
+        }
+        // A lax validator that accepts any confirmation, so only the gateway's own check can catch the change.
+        if (p.name === "adtl.policy" && p.context?.confirmations) return { interceptor: p.name, type: "validation", phase: p.phase, valid: true };
+        return invoke(p);
+      };
+      const { call, posted, audit } = await untrustedSession("allow", 5000, core);
+      const r = await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });
+      expect(r.isError).toBe(true);
+      expect(textOf(r)).toContain("the call changed after it was approved");
+      expect(posted).toHaveLength(0);
+      expect(audit.entries[1]).toMatchObject({ outcome: "blocked", decision: "ask", approval: { outcome: "approved" } });
+    });
+
     it("stops the call when the human denies it", async () => {
       const { call, posted, audit } = await untrustedSession("deny");
       const r = await call("github__post_comment", { repo: "acme/website", number: 42, body: "hello" });

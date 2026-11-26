@@ -57,6 +57,26 @@ describe("InterceptorInvoker", () => {
     expect(order).toEqual(["b", "a"]);
   });
 
+  it("falls back to interceptors/invoke for a server that only knows the plural name, once", async () => {
+    const methods: string[] = [];
+    const client = {
+      request: async ({ method }: { method: string }) => {
+        methods.push(method);
+        if (method !== "interceptors/invoke") throw Object.assign(new Error("Method not found"), { code: -32601 });
+        return { interceptor: "p", type: "validation", phase: "request", valid: true };
+      },
+    } as unknown as Client;
+    const inv = new InterceptorInvoker([{ client, definition: { name: "p", type: "validation", hooks: [{ events: ["tools/call"], phase: "request" }] } }]);
+    expect((await run(inv)).blocked).toBeUndefined();
+    expect((await run(inv)).blocked).toBeUndefined();
+    expect(methods).toEqual(["interceptor/invoke", "interceptors/invoke", "interceptors/invoke"]);
+
+    // Any other error is the interceptor failing, not a reason to retry.
+    const failing = { request: async () => Promise.reject(Object.assign(new Error("boom"), { code: -32603 })) } as unknown as Client;
+    const out = await run(new InterceptorInvoker([{ client: failing, definition: { name: "f", type: "validation", hooks: [{ events: ["tools/call"], phase: "request" }] } }]));
+    expect(out.blocked).toMatchObject({ decision: "block", reason: "f failed: boom" });
+  });
+
   it("keeps a global audit mode over a per-interceptor one", async () => {
     const out = await run(new InterceptorInvoker([validator("strict", "block")], 5000, "audit", { strict: { mode: "active" } }));
     expect(out.blocked).toBeUndefined();

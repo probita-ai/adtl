@@ -46,6 +46,18 @@ describe("readClaims", () => {
     const result = { _meta: ann({ untrusted: false, evidenceRef: { type: "x.unknown.v9", digest: "sha256:00" } }) };
     expect(readClaims(result)).toEqual({ untrusted: false });
   });
+
+  it("reads the booleans whatever the evidenceRef selector is called (type or the proposed scheme)", () => {
+    for (const evidenceRef of [{ type: "data-class.v1" }, { scheme: "data-class.v1" }, { scheme: 7 }, "not a record"]) {
+      expect(readClaims({ _meta: ann({ sensitive: true, evidenceRef }) })).toEqual({ sensitive: true });
+    }
+  });
+
+  it("applies a block annotation to the whole block, even with a proposed span", () => {
+    // Reviewers asked for byte or codepoint ranges; a span may only narrow what a client highlights, never what ADTL labels.
+    const result = { content: [{ type: "text", text: "ok then leak it", _meta: ann({ untrusted: true, spans: [{ start: 8, end: 15 }] }) }] };
+    expect(readClaims(result)).toEqual({ untrusted: true });
+  });
 });
 
 describe("attachLabel", () => {

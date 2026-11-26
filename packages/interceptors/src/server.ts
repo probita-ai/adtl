@@ -9,6 +9,7 @@ import { AdtlInterceptors, ErrorCodes, InterceptorError, VERSION } from "./adtlI
 import {
   INTERCEPTORS_EXTENSION,
   InvocationParamsSchema,
+  InvokePluralRequestSchema,
   InvokeRequestSchema,
   ListRequestSchema,
   type InvocationParams,
@@ -43,7 +44,7 @@ export function createInterceptorServer(core: AdtlInterceptors): Server {
     return { interceptors: core.list(params?.event) };
   });
 
-  onRequest(server, InvokeRequestSchema, (request) => {
+  const invoke: LooseHandler = (request) => {
     const parsed = InvocationParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       const problems = parsed.error.issues.map((i) => `${i.path.join(".") || "params"}: ${i.message}`).join("; ");
@@ -52,7 +53,10 @@ export function createInterceptorServer(core: AdtlInterceptors): Server {
     // InterceptorError carries `code` and `data`, which the SDK puts on the JSON-RPC error as-is.
     // (McpError would prefix "MCP error <code>:" to the message, and the client prefixes it again.)
     return core.invoke(parsed.data as InvocationParams);
-  });
+  };
+  onRequest(server, InvokeRequestSchema, invoke);
+  // Also answer the plural name the WG is considering, so invokers that switch early still work.
+  onRequest(server, InvokePluralRequestSchema, invoke);
 
   return server;
 }

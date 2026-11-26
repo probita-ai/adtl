@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### `@adtl/interceptors`
+- The interceptor server also answers `interceptors/invoke`, the plural name SEP-2624 may move to ([#53](https://github.com/probita-ai/adtl/issues/53)). `interceptor/invoke` still works and is still the default. `INVOKE_METHOD_PLURAL` and `InvokePluralRequestSchema` are exported.
+
+### `@adtl/gateway`
+- The invoker still sends `interceptor/invoke`. If a server answers "method not found", it tries `interceptors/invoke` once and keeps using it for that server. Other errors are interceptor failures, as before.
+- New tests: an approval doesn't carry over to a call that a mutator changed during the recheck, even when the validator accepts the confirmation; trust-annotation booleans are read whatever the `evidenceRef` selector is called; a block annotation with a span still labels the whole block ([#54](https://github.com/probita-ai/adtl/issues/54)).
+
 ## 0.8.3 — experimental
 
 Interceptor servers can offer sinks. Unchanged from 0.8.3-rc.1.
