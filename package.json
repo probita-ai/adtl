@@ -1,7 +1,7 @@
 {
   "name": "adtl",
   "private": true,
-  "description": "ADTL \u2014 Agent Data Trust Labels: an open runtime for MCP trust labels",
+  "description": "ADTL — Agent Data Trust Labels: an open runtime for MCP trust labels",
   "license": "Apache-2.0",
   "type": "module",
   "workspaces": [
@@ -30,5 +30,8 @@
     "typescript": "5.6.3",
     "vite": "8.3.7",
     "vitest": "5.1.0"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true
   }
 }
